@@ -1,0 +1,204 @@
+create extension influxdb;
+create table samples(
+  sample_id serial,
+  sample_text text
+);
+insert into samples(sample_text) values
+       ('myMeasurement fieldKey=1u'),
+       ('myMeasurement fieldKey=12485903u'),
+       ('myMeasurement fieldKey=true'),
+       ('myMeasurement fieldKey=false'),
+       ('myMeasurement fieldKey=t'),
+       ('myMeasurement fieldKey=f'),
+       ('myMeasurement fieldKey=TRUE'),
+       ('myMeasurement fieldKey=FALSE'),
+       ('myMeasurement fieldKey=tRue'),
+       ('myMeasurement fieldKey=fAlse'),
+       ('myMeasurement fieldKey="this is a string"'),
+       ('myMeasurementName fieldKey="fieldValue" 1556813561098000000'),
+       ('my\ Measurement fieldKey="string value"'),
+       ('myMeasurement fieldKey="\"string\" within a string"'),
+       ($$myMeasurement fieldKey='"string" within a string'$$),
+       ('myMeasurement,tag\ Key1=tag\ Value1,tag\ Key2=tag\ Value2 fieldKey=100'),
+       ('myMeasurement,tagKey=🍭 fieldKey="Launch 🚀" 1556813561098000000'),
+       ('myMeasurement,tag1=value1,tag2=value2 fieldKey="fieldValue" 1556813561098000000'),
+       ('myMeasurement fieldKey=1.0'),
+       ('myMeasurement fieldKey=1'),
+       ('myMeasurement fieldKey=-1.234456e+78'),
+       ('myMeasurement fieldKey=1i'),
+       ('myMeasurement fieldKey=12485903i'),
+       ('myMeasurement fieldKey=-12485903i');
+\x on
+with
+  tokens as (
+    select sample_id,
+           sample_text,
+           (influxdb.tokenize(sample_text)).*
+      from samples
+  )
+select sample_id,
+       sample_text,
+       array_agg(kind),
+       array_agg(value)
+  from tokens
+group by sample_id, sample_text
+order by sample_id;
+-[ RECORD 1 ]-------------------------------------------------------------------------------------------------------
+sample_id   | 1
+sample_text | myMeasurement fieldKey=1u
+array_agg   | {134,132,134,61,131}
+array_agg   | {myMeasurement," ",fieldKey,=,1}
+-[ RECORD 2 ]-------------------------------------------------------------------------------------------------------
+sample_id   | 2
+sample_text | myMeasurement fieldKey=12485903u
+array_agg   | {134,132,134,61,131}
+array_agg   | {myMeasurement," ",fieldKey,=,12485903}
+-[ RECORD 3 ]-------------------------------------------------------------------------------------------------------
+sample_id   | 3
+sample_text | myMeasurement fieldKey=true
+array_agg   | {134,132,134,61,135}
+array_agg   | {myMeasurement," ",fieldKey,=,true}
+-[ RECORD 4 ]-------------------------------------------------------------------------------------------------------
+sample_id   | 4
+sample_text | myMeasurement fieldKey=false
+array_agg   | {134,132,134,61,135}
+array_agg   | {myMeasurement," ",fieldKey,=,false}
+-[ RECORD 5 ]-------------------------------------------------------------------------------------------------------
+sample_id   | 5
+sample_text | myMeasurement fieldKey=t
+array_agg   | {134,132,134,61,135}
+array_agg   | {myMeasurement," ",fieldKey,=,t}
+-[ RECORD 6 ]-------------------------------------------------------------------------------------------------------
+sample_id   | 6
+sample_text | myMeasurement fieldKey=f
+array_agg   | {134,132,134,61,135}
+array_agg   | {myMeasurement," ",fieldKey,=,f}
+-[ RECORD 7 ]-------------------------------------------------------------------------------------------------------
+sample_id   | 7
+sample_text | myMeasurement fieldKey=TRUE
+array_agg   | {134,132,134,61,135}
+array_agg   | {myMeasurement," ",fieldKey,=,TRUE}
+-[ RECORD 8 ]-------------------------------------------------------------------------------------------------------
+sample_id   | 8
+sample_text | myMeasurement fieldKey=FALSE
+array_agg   | {134,132,134,61,135}
+array_agg   | {myMeasurement," ",fieldKey,=,FALSE}
+-[ RECORD 9 ]-------------------------------------------------------------------------------------------------------
+sample_id   | 9
+sample_text | myMeasurement fieldKey=tRue
+array_agg   | {134,132,134,61,135}
+array_agg   | {myMeasurement," ",fieldKey,=,tRue}
+-[ RECORD 10 ]------------------------------------------------------------------------------------------------------
+sample_id   | 10
+sample_text | myMeasurement fieldKey=fAlse
+array_agg   | {134,132,134,61,135}
+array_agg   | {myMeasurement," ",fieldKey,=,fAlse}
+-[ RECORD 11 ]------------------------------------------------------------------------------------------------------
+sample_id   | 11
+sample_text | myMeasurement fieldKey="this is a string"
+array_agg   | {134,132,134,61,133}
+array_agg   | {myMeasurement," ",fieldKey,=,"this is a string"}
+-[ RECORD 12 ]------------------------------------------------------------------------------------------------------
+sample_id   | 12
+sample_text | myMeasurementName fieldKey="fieldValue" 1556813561098000000
+array_agg   | {134,132,134,61,133,132,129}
+array_agg   | {myMeasurementName," ",fieldKey,=,fieldValue," ",1556813561098000000}
+-[ RECORD 13 ]------------------------------------------------------------------------------------------------------
+sample_id   | 13
+sample_text | my\ Measurement fieldKey="string value"
+array_agg   | {134,132,134,61,133}
+array_agg   | {"my\\ Measurement"," ",fieldKey,=,"string value"}
+-[ RECORD 14 ]------------------------------------------------------------------------------------------------------
+sample_id   | 14
+sample_text | myMeasurement fieldKey="\"string\" within a string"
+array_agg   | {134,132,134,61,133}
+array_agg   | {myMeasurement," ",fieldKey,=,"\\\"string\\\" within a string"}
+-[ RECORD 15 ]------------------------------------------------------------------------------------------------------
+sample_id   | 15
+sample_text | myMeasurement fieldKey='"string" within a string'
+array_agg   | {134,132,134,61,133}
+array_agg   | {myMeasurement," ",fieldKey,=,"\"string\" within a string"}
+-[ RECORD 16 ]------------------------------------------------------------------------------------------------------
+sample_id   | 16
+sample_text | myMeasurement,tag\ Key1=tag\ Value1,tag\ Key2=tag\ Value2 fieldKey=100
+array_agg   | {134,44,134,61,134,44,134,61,134,132,134,61,129}
+array_agg   | {myMeasurement,",","tag\\ Key1",=,"tag\\ Value1",",","tag\\ Key2",=,"tag\\ Value2"," ",fieldKey,=,100}
+-[ RECORD 17 ]------------------------------------------------------------------------------------------------------
+sample_id   | 17
+sample_text | myMeasurement,tagKey=🍭 fieldKey="Launch 🚀" 1556813561098000000
+array_agg   | {134,44,134,61,134,132,134,61,133,132,129}
+array_agg   | {myMeasurement,",",tagKey,=,🍭," ",fieldKey,=,"Launch 🚀"," ",1556813561098000000}
+-[ RECORD 18 ]------------------------------------------------------------------------------------------------------
+sample_id   | 18
+sample_text | myMeasurement,tag1=value1,tag2=value2 fieldKey="fieldValue" 1556813561098000000
+array_agg   | {134,44,134,61,134,44,134,61,134,132,134,61,133,132,129}
+array_agg   | {myMeasurement,",",tag1,=,value1,",",tag2,=,value2," ",fieldKey,=,fieldValue," ",1556813561098000000}
+-[ RECORD 19 ]------------------------------------------------------------------------------------------------------
+sample_id   | 19
+sample_text | myMeasurement fieldKey=1.0
+array_agg   | {134,132,134,61,128}
+array_agg   | {myMeasurement," ",fieldKey,=,1.0}
+-[ RECORD 20 ]------------------------------------------------------------------------------------------------------
+sample_id   | 20
+sample_text | myMeasurement fieldKey=1
+array_agg   | {134,132,134,61,129}
+array_agg   | {myMeasurement," ",fieldKey,=,1}
+-[ RECORD 21 ]------------------------------------------------------------------------------------------------------
+sample_id   | 21
+sample_text | myMeasurement fieldKey=-1.234456e+78
+array_agg   | {134,132,134,61,128}
+array_agg   | {myMeasurement," ",fieldKey,=,-1.234456e+78}
+-[ RECORD 22 ]------------------------------------------------------------------------------------------------------
+sample_id   | 22
+sample_text | myMeasurement fieldKey=1i
+array_agg   | {134,132,134,61,130}
+array_agg   | {myMeasurement," ",fieldKey,=,1}
+-[ RECORD 23 ]------------------------------------------------------------------------------------------------------
+sample_id   | 23
+sample_text | myMeasurement fieldKey=12485903i
+array_agg   | {134,132,134,61,130}
+array_agg   | {myMeasurement," ",fieldKey,=,12485903}
+-[ RECORD 24 ]------------------------------------------------------------------------------------------------------
+sample_id   | 24
+sample_text | myMeasurement fieldKey=-12485903i
+array_agg   | {134,132,134,61,130}
+array_agg   | {myMeasurement," ",fieldKey,=,-12485903}
+
+\x off
+drop table samples;
+set influxdb.keep_quotes to on;
+select * from influxdb.tokenize('myMeasurement fieldKey="this is a string"');
+ kind |       value        
+------+--------------------
+  134 | myMeasurement
+  132 |  
+  134 | fieldKey
+   61 | =
+  133 | "this is a string"
+(5 rows)
+
+select * from influxdb.tokenize($$myMeasurement fieldKey='this is a string'$$);
+ kind |       value        
+------+--------------------
+  134 | myMeasurement
+  132 |  
+  134 | fieldKey
+   61 | =
+  133 | 'this is a string'
+(5 rows)
+
+-- These should generate reasonable error messages
+\set ON_ERROR_STOP 0
+-- Non-terminated string should generate an error.
+select * from influxdb.tokenize('myMeasurement fieldKey="this is a string');
+ERROR:  EOF in string literal
+DETAIL:  trying to scan '"this is a string'
+select * from influxdb.tokenize($$myMeasurement fieldKey='this is a string$$);
+ERROR:  EOF in string literal
+DETAIL:  trying to scan ''this is a string'
+-- Newlines inside strings are not allowed by the protocol.
+select * from influxdb.tokenize(E'myMeasurement fieldKey="this is a\nstring"');
+ERROR:  EOF in string literal
+DETAIL:  trying to scan '"this is a'
+\set ON_ERROR_STOP 1
+drop extension influxdb;

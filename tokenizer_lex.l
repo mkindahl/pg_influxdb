@@ -1,0 +1,117 @@
+%{
+
+/*
+ * Do *not* include the generated tokenizer_lex.h here: (f)lex is not
+ * designed for that.
+ */
+
+#include <postgres.h>
+
+#include "parser.h"
+#include "influxdb.h"
+
+#define SYNTAX_ERROR(MSG)                  \
+  ereport(ERROR,                           \
+          errcode(ERRCODE_SYNTAX_ERROR),   \
+          errmsg(MSG),                     \
+          errdetail("trying to scan '%s'", yytext));
+
+#define MAYBE_REMOVE_QUOTES()    \
+  do {                           \
+    if (!influxdb_keep_quotes) { \
+      ++yytext;                  \
+      yyleng -= 2;               \
+    }                            \
+  } while (0)
+
+%}
+
+SIGN       [+-]
+DIGITS     [[:digit:]]+
+NUMBER     {SIGN}?{DIGITS}
+SYMBOL     [^,= \\]([^,= \\]|\\.)*
+FLOAT      {NUMBER}\.{DIGITS}([eE]{SIGN}{DIGITS})?
+UTF8-2     [\xc0-\xdf][\x80-\xbf]
+UTF8-3     [\xe0-\xef][\x80-\xbf][\x80-\xbf]
+UTF8-4     [\xf0-\xf7][\x80-\xbf][\x80-\xbf][\x80-\xbf]
+UTF8       {UTF8-2}|{UTF8-3}|{UTF8-4}
+QQSTRING   \"(\\(?s:.)|{UTF8}|[^\\\n\"])+\"
+QSTRING    '(\\(?s:.)|{UTF8}|[^\\\n'])+\'
+QQUNTERM   \"(\\(?s:.)|{UTF8}|[^\\\n\"])+
+QUNTERM    '(\\(?s:.)|{UTF8}|[^\\\n'])+
+
+%option reentrant never-interactive 8bit
+%option header-file="tokenizer_lex.h"
+%option nounput noinput noyywrap
+%option noyyalloc noyyrealloc noyyfree
+%option debug
+
+%%
+"#".*             ;
+{NUMBER}i         yyleng--; return TOKEN_KIND_INTEGER;
+{NUMBER}u         yyleng--; return TOKEN_KIND_UINTEGER;
+{NUMBER}          return TOKEN_KIND_NUMBER;
+{FLOAT}           return TOKEN_KIND_FLOAT;
+(?i:T|TRUE)       |
+(?i:F|FALSE)      return TOKEN_KIND_BOOLEAN;
+{QQSTRING}        |
+{QSTRING}         MAYBE_REMOVE_QUOTES(); return TOKEN_KIND_STRING;
+[[:blank:]]+      return TOKEN_KIND_BLANK;
+{SYMBOL}          return TOKEN_KIND_SYMBOL;
+{QUNTERM}         |
+{QQUNTERM}        SYNTAX_ERROR("EOF in string literal")
+(?s:.)            return *yytext;
+%%
+
+static InfluxToken MakeToken(InfluxTokenKind kind, char *ptr, size_t len) {
+  return (InfluxToken){.kind = kind, .buf = ptr, .len = len};
+}
+
+/*
+ * Initialize the scan state.
+ *
+ * We use yy_scan_bytes (which copies the string) rather than
+ * yy_scan_buffer (which does not copy the string) since the latter
+ * requires two terminating NUL and we might use a VARLEN type as
+ * input, hence we would need to take a copy of it to be able to add
+ * the two terminating NUL bytes, so we can just as well take a copy
+ * of it here.
+ *
+ * TODO: we could switch the buffer to use a StringInfo instead and
+ * initializer it using initReadOnlyStringInfo().
+ */
+void InfluxParseStateInit(InfluxParseState *state, InfluxDataPoint* data_point, char *buf, size_t len) {
+  memset(state, 0, sizeof(*state));
+  memset(data_point, 0, sizeof(*data_point));
+  state->data_point = data_point;
+  yylex_init(&state->scanner);
+  state->buf = yy_scan_bytes(buf, len, state->scanner);
+}
+
+void InfluxParseStateFinish(InfluxParseState *state) {
+  yy_delete_buffer(state->buf, state->scanner);
+  yylex_destroy(state->scanner);
+}
+
+InfluxToken InfluxNextToken(InfluxParseState *state) {
+  int kind = yylex(state->scanner);
+  char *text = yyget_text(state->scanner);
+  size_t leng = yyget_leng(state->scanner);
+#if 0
+  elog(NOTICE, "kind: %s text: '%s', leng: %lu", KindName(kind), text, leng);
+#endif
+  return MakeToken(kind, text, leng);
+}
+
+void *yyalloc(yy_size_t bytes, yyscan_t yyscanner) { return palloc(bytes); }
+
+void *yyrealloc(void *ptr, yy_size_t bytes, yyscan_t yyscanner) {
+  if (ptr)
+    return repalloc(ptr, bytes);
+  else
+    return palloc(bytes);
+}
+
+void yyfree(void *ptr, yyscan_t yyscanner) {
+  if (ptr) pfree(ptr);
+}
