@@ -1,15 +1,12 @@
-#include <c.h>
-#include <fmgr.h>
-#include <funcapi.h>
-#include <miscadmin.h>
 #include <postgres.h>
-
-#include "parser.h"
-#include "utils.h"
+#include <fmgr.h>
 
 #include <access/table.h>
 #include <access/tupdesc.h>
+#include <c.h>
 #include <executor/spi.h>
+#include <funcapi.h>
+#include <miscadmin.h>
 #include <storage/lockdefs.h>
 #include <utils/builtins.h>
 #include <utils/guc.h>
@@ -17,6 +14,9 @@
 #include <utils/lsyscache.h>
 #include <utils/palloc.h>
 #include <utils/rel.h>
+
+#include "parser.h"
+#include "utils.h"
 
 PG_MODULE_MAGIC;
 
@@ -47,10 +47,49 @@ static bool is_time_type(Oid typid) {
   }
 }
 
+/*
+ * Create plan for a relation.
+ */
+static void InfluxCreatePlan(InfluxRelationCacheEntry* entry,
+                             Relation relation) {
+  TupleDesc tupdesc = RelationGetDescr(relation);
+  Oid* argtypes = palloc_array(Oid, tupdesc->natts);
+  SPIPlanPtr plan;
+  StringInfoData stmt;
+
+  initStringInfo(&stmt);
+
+  /* Create insert statement for relation */
+  appendStringInfo(&stmt,
+                   "INSERT INTO %s.%s VALUES (",
+                   quote_identifier(SPI_getnspname(relation)),
+                   quote_identifier(SPI_getrelname(relation)));
+  for (int i = 0; i < tupdesc->natts; ++i) {
+    argtypes[i] = SPI_gettypeid(tupdesc, i + 1);
+    appendStringInfo(&stmt, "$%d", i + 1);
+    if (i < tupdesc->natts - 1)
+      appendStringInfoString(&stmt, ", ");
+  }
+  appendStringInfoString(&stmt, ")");
+
+  plan = SPI_prepare(stmt.data, tupdesc->natts, argtypes);
+
+  if (!plan)
+    elog(ERROR,
+         "SPI_prepare failed for relation %s: %s",
+         SPI_getrelname(relation),
+         SPI_result_code_string(SPI_result));
+
+  if (SPI_keepplan(plan))
+    elog(
+        ERROR, "SPI_keepplan failed for relation %s", SPI_getrelname(relation));
+
+  entry->relid = RelationGetRelid(relation);
+  entry->plan = plan;
+}
+
 static SPIPlanPtr InfluxGetPlanFor(Relation relation) {
   Oid relid = RelationGetRelid(relation);
-  AttInMetadata* attinmeta =
-      TupleDescGetAttInMetadata(RelationGetDescr(relation));
   InfluxRelationCacheEntry* entry;
   bool found;
 
@@ -58,47 +97,14 @@ static SPIPlanPtr InfluxGetPlanFor(Relation relation) {
     HASHCTL ctl;
     ctl.keysize = sizeof(Oid);
     ctl.entrysize = sizeof(InfluxRelationCacheEntry);
-    influxdb_plan_cache = hash_create("InfluxDB Relation Plan Cache", 32, &ctl,
-                                      HASH_ELEM | HASH_BLOBS);
+    influxdb_plan_cache = hash_create(
+        "InfluxDB Relation Plan Cache", 32, &ctl, HASH_ELEM | HASH_BLOBS);
   }
 
   entry = hash_search(influxdb_plan_cache, &relid, HASH_ENTER, &found);
 
-  if (!found) {
-    TupleDesc tupdesc = attinmeta->tupdesc;
-    Oid* argtypes = palloc_array(Oid, tupdesc->natts);
-    SPIPlanPtr plan;
-    StringInfoData stmt;
-
-    initStringInfo(&stmt);
-
-    /* Create insert statement for relation */
-    appendStringInfo(&stmt, "INSERT INTO %s.%s VALUES (",
-                     quote_identifier(SPI_getnspname(relation)),
-                     quote_identifier(SPI_getrelname(relation)));
-    for (int i = 0; i < tupdesc->natts; ++i) {
-      argtypes[i] = SPI_gettypeid(tupdesc, i + 1);
-      elog(DEBUG1, "argtypes[%d]: %d (type \"%s\")", i, argtypes[i],
-           SPI_gettype(tupdesc, i + 1));
-      appendStringInfo(&stmt, "$%d", i + 1);
-      if (i < tupdesc->natts - 1)
-        appendStringInfoString(&stmt, ", ");
-    }
-    appendStringInfoString(&stmt, ")");
-
-    plan = SPI_prepare(stmt.data, tupdesc->natts, argtypes);
-
-    if (!plan)
-      elog(ERROR, "SPI_prepare failed for relation %s: %s",
-           SPI_getrelname(relation), SPI_result_code_string(SPI_result));
-
-    if (SPI_keepplan(plan))
-      elog(ERROR, "SPI_keepplan failed for relation %s",
-           SPI_getrelname(relation));
-
-    entry->relid = relid;
-    entry->plan = plan;
-  }
+  if (!found)
+    InfluxCreatePlan(entry, relation);
 
   return entry->plan;
 }
@@ -127,16 +133,15 @@ static List* InfluxFillAndRemovePairs(List* pairs, AttInMetadata* attinmeta,
     InfluxPair* pair = lfirst(cell);
     StringInfo key = InfluxTokenGetString(&pair->key);
     int attnum = SPI_fnumber(tupdesc, key->data);
-    elog(DEBUG1, "key: %s, attnum: %d, cnull: '%c'", key->data, attnum,
-         attnum > 0 ? cnulls[attnum - 1] : '*');
     if (attnum > 0 && cnulls[attnum - 1] == 'n') {
       FmgrInfo* flinfo = &attinmeta->attinfuncs[attnum - 1];
       StringInfo value = InfluxTokenGetString(&pair->val);
-      elog(DEBUG1, "value: %s, cnull: '%c'", value->data, cnulls[attnum - 1]);
-      if (InputFunctionCallSafe(flinfo, value->data,
+      if (InputFunctionCallSafe(flinfo,
+                                value->data,
                                 attinmeta->attioparams[attnum - 1],
                                 attinmeta->atttypmods[attnum - 1],
-                                (Node*)&escontext, &values[attnum - 1])) {
+                                (Node*)&escontext,
+                                &values[attnum - 1])) {
         cnulls[attnum - 1] = ' ';
         new_pairs = foreach_delete_current(new_pairs, cell);
       }
@@ -175,35 +180,29 @@ static bool InfluxFillValues(InfluxDataPoint* data_point, TupleDesc tupdesc,
 
   memset(cnulls, 'n', tupdesc->natts);
 
-  elog(DEBUG1, "filling datums for data point %s",
-       DatumGetCString(DirectFunctionCall1(
-           jsonb_out, JsonbPGetDatum(DataPointGetJsonB(data_point)))));
-
   time_attnum = SPI_fnumber(tupdesc, "_time");
   if (time_attnum > 0) {
     /* If this is not a time type, we ignore it */
-    if (!is_time_type(SPI_gettypeid(tupdesc, time_attnum))) {
-      elog(DEBUG1, "no _time column: ignoring data point %s",
-           DatumGetCString(DirectFunctionCall1(
-               jsonb_out, JsonbPGetDatum(DataPointGetJsonB(data_point)))));
+    if (!is_time_type(SPI_gettypeid(tupdesc, time_attnum)))
       return false;
-    }
 
     errno = 0;
     timestamp = strtou64(data_point->timestamp.buf, &endptr, 0);
 
     if ((errno && errno != ERANGE) || endptr == data_point->timestamp.buf) {
       if (raise_error)
-        ereport(ERROR, (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                        errmsg("invalid input syntax for: \"%s\"",
-                               data_point->timestamp.buf)));
+        ereport(ERROR,
+                (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                 errmsg("invalid input syntax for: \"%s\"",
+                        data_point->timestamp.buf)));
       else
         return false;
     }
 
     if (errno == ERANGE) {
       if (raise_error)
-        ereport(ERROR, errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+        ereport(ERROR,
+                errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
                 errmsg("value \"%s\" is out of range for timestamp",
                        data_point->timestamp.buf));
       else
@@ -225,12 +224,8 @@ static bool InfluxFillValues(InfluxDataPoint* data_point, TupleDesc tupdesc,
 
   tags_attnum = SPI_fnumber(tupdesc, "_tags");
   if (tags_attnum > 0) {
-    if (SPI_gettypeid(tupdesc, tags_attnum) != JSONBOID) {
-      elog(DEBUG1, "_tags column is not jsonb: ignoring data point %s",
-           DatumGetCString(DirectFunctionCall1(
-               jsonb_out, JsonbPGetDatum(DataPointGetJsonB(data_point)))));
+    if (SPI_gettypeid(tupdesc, tags_attnum) != JSONBOID)
       return false;
-    }
     values[tags_attnum - 1] =
         JsonbPGetDatum(InfluxBuildJsonObject(data_point->tags));
     cnulls[tags_attnum - 1] = ' ';
@@ -238,12 +233,8 @@ static bool InfluxFillValues(InfluxDataPoint* data_point, TupleDesc tupdesc,
 
   fields_attnum = SPI_fnumber(tupdesc, "_fields");
   if (fields_attnum > 0) {
-    if (SPI_gettypeid(tupdesc, tags_attnum) != JSONBOID) {
-      elog(DEBUG1, "_tags column is not jsonb: ignoring data point %s",
-           DatumGetCString(DirectFunctionCall1(
-               jsonb_out, JsonbPGetDatum(DataPointGetJsonB(data_point)))));
+    if (SPI_gettypeid(tupdesc, tags_attnum) != JSONBOID)
       return false;
-    }
     values[fields_attnum - 1] =
         JsonbPGetDatum(InfluxBuildJsonObject(data_point->fields));
     cnulls[fields_attnum - 1] = ' ';
@@ -274,8 +265,10 @@ static void InfluxProcessDataPoint(Oid nspid, InfluxDataPoint* data_point,
   relid = get_relname_relid(measurement->data, nspid);
   if (relid == InvalidOid) {
     if (raise_error)
-      ereport(ERROR, errmsg("no relation \"%s\" found in namespace \"%s\"",
-                            measurement->data, get_namespace_name(nspid)));
+      ereport(ERROR,
+              errmsg("no relation \"%s\" found in namespace \"%s\"",
+                     measurement->data,
+                     get_namespace_name(nspid)));
 
     return;
   }
@@ -286,14 +279,13 @@ static void InfluxProcessDataPoint(Oid nspid, InfluxDataPoint* data_point,
   values = palloc0_array(Datum, natts);
   cnulls = palloc_array(char, natts);
 
-  elog(DEBUG1, "opened table %s with %d attributes",
-       RelationGetRelationName(relation), natts);
   if (InfluxFillValues(data_point, tupdesc, values, cnulls, raise_error)) {
     SPIPlanPtr plan = InfluxGetPlanFor(relation);
 
     err = SPI_execute_plan(plan, values, cnulls, false, 0);
     if (err != SPI_OK_INSERT)
-      elog(LOG, "SPI_execute_plan failed executing: %s",
+      elog(LOG,
+           "SPI_execute_plan failed executing: %s",
            SPI_result_code_string(err));
   }
 
@@ -307,19 +299,18 @@ Datum process_line(PG_FUNCTION_ARGS) {
   InfluxDataPoint data_point;
   int err;
 
-  InfluxParseStateInit(&state, &data_point, VARDATA_ANY(input),
-                       VARSIZE_ANY_EXHDR(input));
-  InfluxParseDataPoint(&state);
-
   if ((err = SPI_connect()) != SPI_OK_CONNECT)
     elog(ERROR, "SPI_connect failed: %s", SPI_result_code_string(err));
 
+  InfluxParseStateInit(
+      &state, &data_point, VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input));
+  InfluxParseDataPoint(&state);
   InfluxProcessDataPoint(nspid, &data_point, true);
+  InfluxParseStateFinish(&state);
 
   if ((err = SPI_finish()) != SPI_OK_FINISH)
     elog(ERROR, "SPI_finish failed: %s", SPI_result_code_string(err));
 
-  InfluxParseStateFinish(&state);
   PG_RETURN_VOID();
 }
 
@@ -327,8 +318,15 @@ void _PG_init(void) {
   /* We use PGC_USERSET to be able to debug this. It could be PGC_SIGHUP. */
   DefineCustomBoolVariable(
       "influxdb.keep_quotes",
-      "Keep quotes as part of the string for quoted strings.", NULL,
-      &influxdb_keep_quotes, false, PGC_USERSET, 0, NULL, NULL, NULL);
+      "Keep quotes as part of the string for quoted strings.",
+      NULL,
+      &influxdb_keep_quotes,
+      false,
+      PGC_USERSET,
+      0,
+      NULL,
+      NULL,
+      NULL);
 
   if (!process_shared_preload_libraries_in_progress)
     return;
