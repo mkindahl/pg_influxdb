@@ -15,6 +15,7 @@
 #include <utils/guc.h>
 #include <utils/jsonb.h>
 #include <utils/lsyscache.h>
+#include <utils/palloc.h>
 #include <utils/rel.h>
 
 PG_MODULE_MAGIC;
@@ -65,13 +66,9 @@ static SPIPlanPtr InfluxGetPlanFor(Relation relation) {
 
   if (!found) {
     TupleDesc tupdesc = attinmeta->tupdesc;
-    Oid* argtypes = palloc(tupdesc->natts);
+    Oid* argtypes = palloc_array(Oid, tupdesc->natts);
     SPIPlanPtr plan;
     StringInfoData stmt;
-
-    for (int i = 0; i < tupdesc->natts; ++i) {
-      argtypes[i] = SPI_gettypeid(tupdesc, i + 1);
-    }
 
     initStringInfo(&stmt);
 
@@ -79,9 +76,14 @@ static SPIPlanPtr InfluxGetPlanFor(Relation relation) {
     appendStringInfo(&stmt, "INSERT INTO %s.%s VALUES (",
                      quote_identifier(SPI_getnspname(relation)),
                      quote_identifier(SPI_getrelname(relation)));
-    for (int i = 0; i < tupdesc->natts; ++i)
-      appendStringInfo(&stmt, "$%d%s", i + 1,
-                       (i < tupdesc->natts - 1 ? ", " : ""));
+    for (int i = 0; i < tupdesc->natts; ++i) {
+      argtypes[i] = SPI_gettypeid(tupdesc, i + 1);
+      elog(DEBUG1, "argtypes[%d]: %d (type \"%s\")", i, argtypes[i],
+           SPI_gettype(tupdesc, i + 1));
+      appendStringInfo(&stmt, "$%d", i + 1);
+      if (i < tupdesc->natts - 1)
+        appendStringInfoString(&stmt, ", ");
+    }
     appendStringInfoString(&stmt, ")");
 
     plan = SPI_prepare(stmt.data, tupdesc->natts, argtypes);
@@ -99,6 +101,48 @@ static SPIPlanPtr InfluxGetPlanFor(Relation relation) {
   }
 
   return entry->plan;
+}
+
+/*
+ * Remove pairs from the list with a matching key in the tuple
+ * descriptor and add the value to the datum list.
+ *
+ * This will parse the string value of the value with the input
+ * function for the type. If the parsing fails for any reason, the
+ * field is not added to the datum array and will stay in the list.
+ *
+ * If the datum value has already been filled in (checked by checking
+ * cnulls), we also do not remove the pair. This means that conflicts
+ * in keys between fields and tags will keep fields in the _fields
+ * column.
+ */
+static List* InfluxFillAndRemovePairs(List* pairs, AttInMetadata* attinmeta,
+                                      Datum* values, char* cnulls) {
+  ListCell* cell;
+  TupleDesc tupdesc = attinmeta->tupdesc;
+  List* new_pairs = pairs;
+  ErrorSaveContext escontext = {T_ErrorSaveContext};
+
+  foreach (cell, pairs) {
+    InfluxPair* pair = lfirst(cell);
+    StringInfo key = InfluxTokenGetString(&pair->key);
+    int attnum = SPI_fnumber(tupdesc, key->data);
+    elog(DEBUG1, "key: %s, attnum: %d, cnull: '%c'", key->data, attnum,
+         attnum > 0 ? cnulls[attnum - 1] : '*');
+    if (attnum > 0 && cnulls[attnum - 1] == 'n') {
+      FmgrInfo* flinfo = &attinmeta->attinfuncs[attnum - 1];
+      StringInfo value = InfluxTokenGetString(&pair->val);
+      elog(DEBUG1, "value: %s, cnull: '%c'", value->data, cnulls[attnum - 1]);
+      if (InputFunctionCallSafe(flinfo, value->data,
+                                attinmeta->attioparams[attnum - 1],
+                                attinmeta->atttypmods[attnum - 1],
+                                (Node*)&escontext, &values[attnum - 1])) {
+        cnulls[attnum - 1] = ' ';
+        new_pairs = foreach_delete_current(new_pairs, cell);
+      }
+    }
+  }
+  return new_pairs;
 }
 
 /*
@@ -123,10 +167,13 @@ static SPIPlanPtr InfluxGetPlanFor(Relation relation) {
  * afterwards.
  */
 static bool InfluxFillValues(InfluxDataPoint* data_point, TupleDesc tupdesc,
-                             Datum* values, char* cnull, bool raise_error) {
+                             Datum* values, char* cnulls, bool raise_error) {
+  AttInMetadata* attinmeta = TupleDescGetAttInMetadata(tupdesc);
   int64 timestamp;
   int time_attnum, tags_attnum, fields_attnum;
   char* endptr;
+
+  memset(cnulls, 'n', tupdesc->natts);
 
   elog(DEBUG1, "filling datums for data point %s",
        DatumGetCString(DirectFunctionCall1(
@@ -170,8 +217,11 @@ static bool InfluxFillValues(InfluxDataPoint* data_point, TupleDesc tupdesc,
                  ((POSTGRES_EPOCH_JDATE - UNIX_EPOCH_JDATE) * SECS_PER_DAY);
 
     values[time_attnum - 1] = Int64GetDatum(timestamp);
-    cnull[time_attnum - 1] = ' ';
+    cnulls[time_attnum - 1] = ' ';
   }
+
+  InfluxFillAndRemovePairs(data_point->tags, attinmeta, values, cnulls);
+  InfluxFillAndRemovePairs(data_point->fields, attinmeta, values, cnulls);
 
   tags_attnum = SPI_fnumber(tupdesc, "_tags");
   if (tags_attnum > 0) {
@@ -183,7 +233,7 @@ static bool InfluxFillValues(InfluxDataPoint* data_point, TupleDesc tupdesc,
     }
     values[tags_attnum - 1] =
         JsonbPGetDatum(InfluxBuildJsonObject(data_point->tags));
-    cnull[tags_attnum - 1] = ' ';
+    cnulls[tags_attnum - 1] = ' ';
   }
 
   fields_attnum = SPI_fnumber(tupdesc, "_fields");
@@ -196,7 +246,7 @@ static bool InfluxFillValues(InfluxDataPoint* data_point, TupleDesc tupdesc,
     }
     values[fields_attnum - 1] =
         JsonbPGetDatum(InfluxBuildJsonObject(data_point->fields));
-    cnull[fields_attnum - 1] = ' ';
+    cnulls[fields_attnum - 1] = ' ';
   }
 
   return true;
@@ -212,7 +262,6 @@ static void InfluxProcessDataPoint(Oid nspid, InfluxDataPoint* data_point,
   StringInfo measurement;
   int err, natts;
   Relation relation;
-  AttInMetadata* attinmeta;
   Datum* values;
   TupleDesc tupdesc;
 
@@ -233,10 +282,9 @@ static void InfluxProcessDataPoint(Oid nspid, InfluxDataPoint* data_point,
 
   relation = table_open(relid, RowExclusiveLock);
   tupdesc = RelationGetDescr(relation);
-  attinmeta = TupleDescGetAttInMetadata(tupdesc);
-  natts = attinmeta->tupdesc->natts;
-  values = palloc0(natts * sizeof(Datum));
-  cnulls = palloc(natts * sizeof(char));
+  natts = tupdesc->natts;
+  values = palloc0_array(Datum, natts);
+  cnulls = palloc_array(char, natts);
 
   elog(DEBUG1, "opened table %s with %d attributes",
        RelationGetRelationName(relation), natts);
