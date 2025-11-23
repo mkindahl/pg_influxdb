@@ -1,0 +1,15 @@
+create extension influxdb;
+create schema testing;
+show influxdb.auto_create_table;
+ influxdb.auto_create_table 
+----------------------------
+ off
+(1 row)
+
+call influxdb.process_line('testing', E'disk free=527806464i,total=0i 1574753954000000000');
+ERROR:  no relation "disk" found in namespace "testing"
+set influxdb.auto_create_table to on;
+call influxdb.process_line('testing', E'disk free=527806464i,total=0i 1574753954000000000');
+drop schema testing cascade;
+NOTICE:  drop cascades to table testing.disk
+drop extension influxdb;

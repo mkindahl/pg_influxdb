@@ -91,3 +91,9 @@ f_bool  | f
 f_text  | magic
 
 \x off
+drop schema testing cascade;
+NOTICE:  drop cascades to 3 other objects
+DETAIL:  drop cascades to table testing.disk
+drop cascades to table testing.magic
+drop cascades to table testing.all_types
+drop extension influxdb;

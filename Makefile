@@ -7,7 +7,7 @@ EXTENSION = influxdb
 DATA_built = influxdb--$(VERSION_influxdb).sql
 PGFILEDESC = "influxdb - InfluxDB web interface to PostgreSQL"
 
-REGRESS = tokenizer parser process
+REGRESS = tokenizer parser process create
 
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)

@@ -84,16 +84,16 @@ my\ Measurement,"tag key1"="device" fieldKey=100 1556813561098000000
 'my Measurement','tag key1'=device fieldKey=100 1556813561098000000
 ```
 
-To disable this behaviour and include the quotes in the string, set
+To disable this behavior and include the quotes in the string, set
 the GUC `influxdb.keep_quotes` to `on`.
 
 ### Boolean values
 
 From [section on boolean values][boolean] only the values `t`, `T`,
 `true`, `True`, `TRUE`, `f`, `F`, `false`, `False`, and `FALSE` are
-booleans. According to this definition, it means that `tRue` is not a
+boolean. According to this definition, it means that `tRue` is not a
 boolean, but with `pg_influxdb` we consider values `T`, `TRUE`, `F`,
-and `FALSE` in all combinations of case as booleans. This means that
+and `FALSE` in all combinations of case as boolean. This means that
 also `tRue` is a boolean (if not quoted).
 
 [1]: https://github.com/timescale/pg_influx
@@ -101,3 +101,20 @@ also `tRue` is a boolean (if not quoted).
 [quotes]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/#quotes
 [boolean]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/#boolean
 [duplicate]: https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/#duplicate-points
+
+## Options
+
+The following options are available:
+
+`influxdb.keep_quotes` (`boolean`)
+: Keep quotes for a string as part of the actual string. Quotes are normally
+: not part of the string, as outlined above, but if you want to keep
+: the quotes, then set this to `on`. Default is `off`. This option can
+: be set at any time and not only in the configuration file.
+
+`influxdb.auto_create_table` (`boolean`)
+: Auto-create a default table if no table exists for the measurement
+: that arrived. This allows users to first collect measurements and
+: then later decide what measurements are interesting and how the
+: table definitions should look. Default is `off`. This option can
+: be set at any time and not only in the configuration file.

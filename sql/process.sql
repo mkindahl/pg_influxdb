@@ -1,5 +1,4 @@
 create extension influxdb;
-
 create schema testing;
 
 create table testing.disk(_time timestamptz, _tags jsonb, _fields jsonb);
@@ -39,3 +38,5 @@ CALL influxdb.process_line('testing', 'all_types f_float=3.14,f_bool=False,f_tex
 select * from testing.all_types;
 \x off
 
+drop schema testing cascade;
+drop extension influxdb;

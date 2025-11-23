@@ -4,9 +4,11 @@
 #include <access/table.h>
 #include <access/tupdesc.h>
 #include <c.h>
+#include <commands/tablecmds.h>
 #include <executor/spi.h>
 #include <funcapi.h>
 #include <miscadmin.h>
+#include <nodes/makefuncs.h>
 #include <storage/lockdefs.h>
 #include <utils/builtins.h>
 #include <utils/guc.h>
@@ -25,6 +27,7 @@ void _PG_init(void);
 PG_FUNCTION_INFO_V1(process_line);
 
 bool influxdb_keep_quotes = false;
+bool influxdb_auto_create_table = false;
 
 static HTAB* influxdb_plan_cache = NULL;
 
@@ -45,6 +48,23 @@ static bool is_time_type(Oid typid) {
     default:
       return false;
   }
+}
+
+static Oid InfluxCreateTable(Oid nspid, InfluxDataPoint* data_point,
+                             bool raise_error) {
+  CreateStmt* create = makeNode(CreateStmt);
+  ObjectAddress address;
+
+  create->relation =
+      makeRangeVar(get_namespace_name(nspid),
+                   InfluxTokenGetString(&data_point->measurement)->data,
+                   -1);
+  create->tableElts =
+      list_make3(makeColumnDef("_time", TIMESTAMPTZOID, -1, InvalidOid),
+                 makeColumnDef("_tags", JSONBOID, -1, InvalidOid),
+                 makeColumnDef("_fields", JSONBOID, -1, InvalidOid));
+  address = DefineRelation(create, RELKIND_RELATION, GetUserId(), NULL, NULL);
+  return address.objectId;
 }
 
 /*
@@ -259,18 +279,25 @@ static void InfluxProcessDataPoint(Oid nspid, InfluxDataPoint* data_point,
   measurement = InfluxTokenGetString(&data_point->measurement);
 
   /*
-   * Get the relation id of the measurement name. If none exists, we
-   * silently ignore it to avoid flooding the log with error messages.
+   * Get the relation id of the measurement name.
+   *
+   * If none exists, we try to create a table for it if
+   * auto_create_table is true.
+   *
+   * Otherwise we silently ignore it to avoid flooding the log with
+   * error messages.
    */
   relid = get_relname_relid(measurement->data, nspid);
   if (relid == InvalidOid) {
-    if (raise_error)
+    if (influxdb_auto_create_table) {
+      relid = InfluxCreateTable(nspid, data_point, raise_error);
+    } else if (raise_error)
       ereport(ERROR,
               errmsg("no relation \"%s\" found in namespace \"%s\"",
                      measurement->data,
                      get_namespace_name(nspid)));
-
-    return;
+    else
+      return;
   }
 
   relation = table_open(relid, RowExclusiveLock);
@@ -327,6 +354,17 @@ void _PG_init(void) {
       NULL,
       NULL,
       NULL);
+
+  DefineCustomBoolVariable("influxdb.auto_create_table",
+                           "Automatically create a table if metric is missing.",
+                           NULL,
+                           &influxdb_auto_create_table,
+                           false,
+                           PGC_USERSET,
+                           0,
+                           NULL,
+                           NULL,
+                           NULL);
 
   if (!process_shared_preload_libraries_in_progress)
     return;

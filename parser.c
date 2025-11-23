@@ -324,6 +324,7 @@ Datum parse_line(PG_FUNCTION_ARGS) {
   InfluxParseState state;
   text* input = PG_GETARG_TEXT_PP(0);
   InfluxDataPoint data_point;
+
   InfluxParseStateInit(
       &state, &data_point, VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input));
   InfluxParseDataPoint(&state);

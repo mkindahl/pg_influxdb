@@ -54,3 +54,5 @@ tokenizer_lex.c
 tokenizer_lex.h
 influxdb--0.1.sql
 compile_commands.json
+regression.diffs
+regression.out
