@@ -18,6 +18,7 @@
 #include <utils/rel.h>
 
 #include "parser.h"
+#include "plans.h"
 #include "utils.h"
 
 PG_MODULE_MAGIC;
@@ -28,13 +29,6 @@ PG_FUNCTION_INFO_V1(process_line);
 
 bool influxdb_keep_quotes = false;
 bool influxdb_auto_create_table = false;
-
-static HTAB* influxdb_plan_cache = NULL;
-
-typedef struct InfluxRelationCacheEntry {
-  Oid relid;
-  SPIPlanPtr plan;
-} InfluxRelationCacheEntry;
 
 static bool is_time_type(Oid typid) {
   switch (typid) {
@@ -65,68 +59,6 @@ static Oid InfluxCreateTable(Oid nspid, InfluxDataPoint* data_point,
                  makeColumnDef("_fields", JSONBOID, -1, InvalidOid));
   address = DefineRelation(create, RELKIND_RELATION, GetUserId(), NULL, NULL);
   return address.objectId;
-}
-
-/*
- * Create plan for a relation.
- */
-static void InfluxCreatePlan(InfluxRelationCacheEntry* entry,
-                             Relation relation) {
-  TupleDesc tupdesc = RelationGetDescr(relation);
-  Oid* argtypes = palloc_array(Oid, tupdesc->natts);
-  SPIPlanPtr plan;
-  StringInfoData stmt;
-
-  initStringInfo(&stmt);
-
-  /* Create insert statement for relation */
-  appendStringInfo(&stmt,
-                   "INSERT INTO %s.%s VALUES (",
-                   quote_identifier(SPI_getnspname(relation)),
-                   quote_identifier(SPI_getrelname(relation)));
-  for (int i = 0; i < tupdesc->natts; ++i) {
-    argtypes[i] = SPI_gettypeid(tupdesc, i + 1);
-    appendStringInfo(&stmt, "$%d", i + 1);
-    if (i < tupdesc->natts - 1)
-      appendStringInfoString(&stmt, ", ");
-  }
-  appendStringInfoString(&stmt, ")");
-
-  plan = SPI_prepare(stmt.data, tupdesc->natts, argtypes);
-
-  if (!plan)
-    elog(ERROR,
-         "SPI_prepare failed for relation %s: %s",
-         SPI_getrelname(relation),
-         SPI_result_code_string(SPI_result));
-
-  if (SPI_keepplan(plan))
-    elog(
-        ERROR, "SPI_keepplan failed for relation %s", SPI_getrelname(relation));
-
-  entry->relid = RelationGetRelid(relation);
-  entry->plan = plan;
-}
-
-static SPIPlanPtr InfluxGetPlanFor(Relation relation) {
-  Oid relid = RelationGetRelid(relation);
-  InfluxRelationCacheEntry* entry;
-  bool found;
-
-  if (!influxdb_plan_cache) {
-    HASHCTL ctl;
-    ctl.keysize = sizeof(Oid);
-    ctl.entrysize = sizeof(InfluxRelationCacheEntry);
-    influxdb_plan_cache = hash_create(
-        "InfluxDB Relation Plan Cache", 32, &ctl, HASH_ELEM | HASH_BLOBS);
-  }
-
-  entry = hash_search(influxdb_plan_cache, &relid, HASH_ENTER, &found);
-
-  if (!found)
-    InfluxCreatePlan(entry, relation);
-
-  return entry->plan;
 }
 
 /*

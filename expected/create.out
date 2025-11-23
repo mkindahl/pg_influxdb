@@ -6,10 +6,67 @@ show influxdb.auto_create_table;
  off
 (1 row)
 
+\set ON_ERROR_STOP 0
 call influxdb.process_line('testing', E'disk free=527806464i,total=0i 1574753954000000000');
 ERROR:  no relation "disk" found in namespace "testing"
+\set ON_ERROR_STOP 1
 set influxdb.auto_create_table to on;
 call influxdb.process_line('testing', E'disk free=527806464i,total=0i 1574753954000000000');
+\d testing.*
+                        Table "testing.disk"
+ Column  |           Type           | Collation | Nullable | Default 
+---------+--------------------------+-----------+----------+---------
+ _time   | timestamp with time zone |           |          | 
+ _tags   | jsonb                    |           |          | 
+ _fields | jsonb                    |           |          | 
+
+\x on
+select * from testing.disk;
+-[ RECORD 1 ]----------------------------
+_time   | Mon Nov 25 23:39:14 2019 PST
+_tags   | {}
+_fields | {"free": 527806464, "total": 0}
+
+\x off
+-- Modify the table and add a new column for the "free" field.
+alter table testing.disk add column free integer;
+\d testing.*
+                        Table "testing.disk"
+ Column  |           Type           | Collation | Nullable | Default 
+---------+--------------------------+-----------+----------+---------
+ _time   | timestamp with time zone |           |          | 
+ _tags   | jsonb                    |           |          | 
+ _fields | jsonb                    |           |          | 
+ free    | integer                  |           |          | 
+
+-- This will move the fields that was just added into the new field.
+update testing.disk
+set free = (_fields->>'free')::integer,
+    _fields = _fields - 'free';
+-- Test processing a new line and make sure that a new plan is
+-- constructed for the insert statement.
+\x on
+select * from testing.disk;
+-[ RECORD 1 ]-------------------------
+_time   | Mon Nov 25 23:39:14 2019 PST
+_tags   | {}
+_fields | {"total": 0}
+free    | 527806464
+
+call influxdb.process_line('testing', E'disk free=12345678i,total=0i 1574753955000000000');
+select * from testing.disk;
+-[ RECORD 1 ]-------------------------
+_time   | Mon Nov 25 23:39:14 2019 PST
+_tags   | {}
+_fields | {"total": 0}
+free    | 527806464
+-[ RECORD 2 ]-------------------------
+_time   | Mon Nov 25 23:39:15 2019 PST
+_tags   | {}
+_fields | {"total": 0}
+free    | 12345678
+
+\x off
 drop schema testing cascade;
 NOTICE:  drop cascades to table testing.disk
 drop extension influxdb;
