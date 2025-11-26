@@ -1,5 +1,5 @@
 MODULE_big = influxdb
-OBJS = influxdb.o parser.o tokenizer_lex.o utils.o plans.o
+OBJS = influxdb.o parser.o tokenizer_lex.o utils.o plans.o insert.o table.o
 
 VERSION_influxdb = $(shell perl -ne 'print "$$1" if /^default_version.*(\d+\.\d+)/' influxdb.control)
 

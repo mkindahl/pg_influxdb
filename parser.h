@@ -1,3 +1,5 @@
+#ifndef INFLUXDB_PARSER_H_
+#define INFLUXDB_PARSER_H_
 #include <postgres.h>
 
 #include <nodes/pg_list.h>
@@ -72,3 +74,5 @@ extern JsonbValue InfluxTokenGetJsonbValue(InfluxToken* token);
 extern JsonbValue* InfluxJsonbAddPairs(JsonbParseState** state, List* items);
 extern Jsonb* DataPointGetJsonB(InfluxDataPoint* data_point);
 extern void InfluxParseDataPoint(InfluxParseState* state);
+
+#endif /*INFLUXDB_PARSER_H_ */
