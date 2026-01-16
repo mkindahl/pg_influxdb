@@ -1,0 +1,67 @@
+name: C/C++ CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-ubuntu:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [17, 18]
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wget gnupg libipc-run-perl apt-file
+
+      - name: Setup and install PGDG PostgreSQL
+        run: |
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+          sudo apt-get update
+          sudo apt-get -y install postgresql-${{ matrix.version }} postgresql-client-${{ matrix.version }} postgresql-server-dev-${{ matrix.version }}
+
+      - name: Check that tools were successfully installed
+        continue-on-error: true
+        run: |
+          pg_config
+          apt-file search `pg_config --includedir-server`/postgres.h
+          dpkg -S `pg_config --includedir-server`/postgres.h
+          ls -l `pg_config --includedir-server`
+
+      - name: Create and configure PostgreSQL cluster
+        run: |
+          sudo pg_createcluster --start ${{ matrix.version }} test
+          pg_lsclusters
+      - uses: actions/checkout@v2
+
+      - name: Make and install
+        run: |
+          make
+          sudo make install
+        env:
+          PG_CONFIG: /usr/lib/postgresql/${{ matrix.version }}/bin/pg_config
+
+      - name: Run install tests
+        run: |
+          export PGPORT=$(pg_lsclusters -j ${{ matrix.version }} test | jq -r '.[] | (.port)')
+          sudo -upostgres env PGPORT=$PGPORT createuser --superuser runner
+          make installcheck
+        env:
+          PG_CONFIG: /usr/lib/postgresql/${{ matrix.version }}/bin/pg_config
+
+      - name: Show regression diffs on failure
+        if: failure()
+        run: |
+          if [ -f regression.diffs ]; then
+            cat regression.diffs
+          fi
+          for F in tmp_check/log/*; do
+            echo "=== $F ==="
+            cat $F
+          done
