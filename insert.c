@@ -27,6 +27,7 @@
 #include <executor/spi.h>
 #include <funcapi.h>
 #include <nodes/miscnodes.h>
+#include <tcop/utility.h>
 #include <utils/builtins.h>
 #include <utils/elog.h>
 #include <utils/jsonb.h>

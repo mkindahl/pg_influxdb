@@ -16,22 +16,12 @@
  * <https://www.gnu.org/licenses/>.
  */
 
-#ifndef INFLUXDB_INFLUXDB_H_
-#define INFLUXDB_INFLUXDB_H_
+#ifndef CONFIG_H_
+#define CONFIG_H_
 
-#include <postgres.h>
-#include <fmgr.h>
+#define INFLUXDB_DEFAULT_HTTP_SERVICE "8086"
+#define INFLUXDB_DEFAULT_SCHEMA_NAME "measurements"
+#define INFLUXDB_HTTP_FUNCTION_NAME "InfluxHttpWorkerMain"
+#define INFLUXDB_LIBRARY_NAME "influxdb"
 
-#include <stdbool.h>
-
-extern void process_text_internal(Oid nspid, char* buf, size_t len);
-extern Datum process_text(PG_FUNCTION_ARGS);
-
-extern bool influxdb_keep_quotes;
-extern bool influxdb_auto_create_table;
-extern char* influxdb_http_service;
-extern char* influxdb_database_name;
-extern char* influxdb_schema_name;
-extern int influxdb_http_workers;
-
-#endif /* INFLUXDB_INFLUXDB_H_ */
+#endif /* CONFIG_H_ */

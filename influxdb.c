@@ -29,6 +29,7 @@
 #include <funcapi.h>
 #include <miscadmin.h>
 #include <nodes/makefuncs.h>
+#include <postmaster/bgworker.h>
 #include <storage/lockdefs.h>
 #include <utils/builtins.h>
 #include <utils/guc.h>
@@ -37,6 +38,8 @@
 #include <utils/palloc.h>
 #include <utils/rel.h>
 
+#include "config.h"
+#include "http_worker.h"
 #include "insert.h"
 #include "parser.h"
 
@@ -48,6 +51,10 @@ PG_FUNCTION_INFO_V1(process_text);
 
 bool influxdb_keep_quotes = false;
 bool influxdb_auto_create_table = false;
+char* influxdb_http_service = INFLUXDB_DEFAULT_HTTP_SERVICE;
+char* influxdb_database_name = NULL;
+char* influxdb_schema_name = INFLUXDB_DEFAULT_SCHEMA_NAME;
+int influxdb_http_workers = 4;
 
 void process_text_internal(Oid nspid, char* buf, size_t len) {
   InfluxParseState state;
@@ -84,6 +91,8 @@ Datum process_text(PG_FUNCTION_ARGS) {
 }
 
 void _PG_init(void) {
+  BackgroundWorker worker;
+
   /* We use PGC_USERSET to be able to debug this. It could be PGC_SIGHUP. */
   DefineCustomBoolVariable(
       "influxdb.keep_quotes",
@@ -108,8 +117,62 @@ void _PG_init(void) {
                            NULL,
                            NULL);
 
+  DefineCustomIntVariable("influxdb.http_workers",   /* option name */
+                          "Number of HTTP workers.", /* short descriptor */
+                          /* long description */
+                          "Number of HTTP workers to spawn when starting up"
+                          "the server.",
+                          &influxdb_http_workers, /* value address */
+                          4,                      /* boot value */
+                          0,                      /* min value */
+                          20,                     /* max value */
+                          PGC_SIGHUP,             /* option context */
+                          0,                      /* option flags */
+                          NULL,                   /* check hook */
+                          NULL,                   /* assign hook */
+                          NULL);                  /* show hook */
+
   if (!process_shared_preload_libraries_in_progress)
     return;
 
+  DefineCustomStringVariable(
+      "influxdb.http_service",
+      "Service name or port for HTTP connections.",
+      "Service name or port number to listen for HTTP connections. If it is a "
+      "service name, it will be looked up.",
+      &influxdb_http_service,
+      INFLUXDB_DEFAULT_HTTP_SERVICE,
+      PGC_POSTMASTER,
+      0,
+      NULL,
+      NULL,
+      NULL);
+
+  DefineCustomStringVariable("influxdb.database_name",
+                             "Database name for workers.",
+                             "Database name that workers will connect to.",
+                             &influxdb_database_name,
+                             NULL,
+                             PGC_POSTMASTER,
+                             0,
+                             NULL,
+                             NULL,
+                             NULL);
+
+  DefineCustomStringVariable("influxdb.schema_name",
+                             "Schema name for measurement tables.",
+                             "Schema name for all tables with measurements.",
+                             &influxdb_schema_name,
+                             INFLUXDB_DEFAULT_SCHEMA_NAME,
+                             PGC_POSTMASTER,
+                             0,
+                             NULL,
+                             NULL,
+                             NULL);
+
   MarkGUCPrefixReserved("influxdb");
+
+  InfluxHttpWorkerInit(&worker);
+  for (int i = 0; i < influxdb_http_workers; i++)
+    RegisterBackgroundWorker(&worker);
 }
