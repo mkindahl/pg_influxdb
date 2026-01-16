@@ -16,22 +16,24 @@
  * <https://www.gnu.org/licenses/>.
  */
 
-#ifndef INFLUXDB_INFLUXDB_H_
-#define INFLUXDB_INFLUXDB_H_
+#ifndef NETWORK_H_
+#define NETWORK_H_
 
-#include <postgres.h>
-#include <fmgr.h>
+#include <fcntl.h>
 
-#include <stdbool.h>
+#include <sys/socket.h>
+#include <sys/types.h>
 
-extern void process_text_internal(Oid nspid, char* buf, size_t len);
-extern Datum process_text(PG_FUNCTION_ARGS);
+typedef int network_setup(int, const struct sockaddr*, socklen_t);
 
-extern bool influxdb_keep_quotes;
-extern bool influxdb_auto_create_table;
-extern char* influxdb_http_service;
-extern char* influxdb_database_name;
-extern char* influxdb_schema_name;
-extern int influxdb_http_workers;
+static inline int set_nonblocking(int fd) {
+  int flags = fcntl(fd, F_GETFL, 0);
+  if (flags == -1)
+    return -1;
+  return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+}
 
-#endif /* INFLUXDB_INFLUXDB_H_ */
+int network_listener_create(const char* service, struct sockaddr* addr,
+                            socklen_t* addrlen);
+
+#endif /* NETWORK_H_ */
