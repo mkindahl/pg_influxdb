@@ -62,5 +62,7 @@ extern HttpConnectionEntry* InfluxHttpWorkerDelConnection(
     InfluxHttpWorkerState* state, int fd);
 extern void InfluxHttpWorkerSendResponse(InfluxHttpWorkerState* state,
                                          int client_fd, int status_code,
-                                         const char* reason, const char* body);
+                                         const char* reason,
+                                         const char* content_type,
+                                         const char* body);
 #endif /* HTTP_WORKER_H_ */

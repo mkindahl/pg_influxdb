@@ -22,7 +22,56 @@
 
 #include "parser.h"
 
-Jsonb *InfluxBuildJsonObject(List *items) {
-  JsonbParseState *state = NULL;
+Jsonb* InfluxBuildJsonObject(List* items) {
+  JsonbParseState* state = NULL;
   return JsonbValueToJsonb(InfluxJsonbAddPairs(&state, items));
+}
+
+JsonbValue* InfluxJsonbAddPairs(JsonbParseState** state, List* items) {
+  JsonbValue jb_key, jb_val;
+  ListCell* cell;
+
+  (void)pushJsonbValue(state, WJB_BEGIN_OBJECT, NULL);
+
+  foreach (cell, items) {
+    InfluxPair* pair = (InfluxPair*)lfirst(cell);
+    StringInfo key = InfluxTokenGetString(&pair->key);
+
+    jb_key.type = jbvString;
+    jb_key.val.string.val = key->data;
+    jb_key.val.string.len = key->len;
+
+    pushJsonbValue(state, WJB_KEY, &jb_key);
+
+    jb_val = InfluxTokenGetJsonbValue(&pair->val);
+
+    pushJsonbValue(state, WJB_VALUE, &jb_val);
+  }
+
+  return pushJsonbValue(state, WJB_END_OBJECT, NULL);
+}
+
+Jsonb* InfluxErrorDataGetJsonb(ErrorData* edata) {
+  JsonbParseState* state = NULL;
+  JsonbValue jb_key, jb_val;
+  JsonbValue* result;
+
+  (void)pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
+
+  /* Add error message */
+  jb_key.type = jbvString;
+  jb_key.val.string.val = "error";
+  jb_key.val.string.len = sizeof("error") - 1;
+
+  pushJsonbValue(&state, WJB_KEY, &jb_key);
+
+  jb_val.type = jbvString;
+  jb_val.val.string.val = edata->message;
+  jb_val.val.string.len = strlen(edata->message);
+
+  (void)pushJsonbValue(&state, WJB_VALUE, &jb_val);
+
+  result = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
+
+  return JsonbValueToJsonb(result);
 }

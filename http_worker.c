@@ -30,6 +30,7 @@
 #include <utils/backend_status.h>
 #include <utils/guc.h>
 #include <utils/hsearch.h>
+#include <utils/jsonb.h>
 #include <utils/memutils.h>
 #include <utils/resowner.h>
 
@@ -48,6 +49,7 @@
 #include "http_parser.h"
 #include "influxdb.h"
 #include "network.h"
+#include "utils.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -63,10 +65,9 @@ struct ParsingData {
   enum Operation oper;
 };
 
-static void http_worker_insert_measurements(const char* buf, size_t buflen) {
-  MemoryContext oldcontext = CurrentMemoryContext;
-  ResourceOwner oldowner = CurrentResourceOwner;
+static void HttpWorkerInsertMeasurements(const char* buf, size_t buflen) {
   int err;
+  Oid nspoid;
 
   pgstat_report_activity(STATE_RUNNING, "initializing worker_spi schema");
 
@@ -78,34 +79,15 @@ static void http_worker_insert_measurements(const char* buf, size_t buflen) {
 
   PushActiveSnapshot(GetTransactionSnapshot());
 
-  PG_TRY();
-  {
-    Oid nspoid = get_namespace_oid(influxdb_schema_name, false);
-    elog(LOG, "processing text:\n%s", buf);
-    process_text_internal(nspoid, (char*)buf, buflen);
+  nspoid = get_namespace_oid(influxdb_schema_name, false);
+  elog(LOG, "processing text:\n%s", buf);
+  process_text_internal(nspoid, (char*)buf, buflen);
 
-    if ((err = SPI_finish()) != SPI_OK_FINISH)
-      elog(ERROR, "SPI_finish failed: %s", SPI_result_code_string(err));
+  if ((err = SPI_finish()) != SPI_OK_FINISH)
+    elog(ERROR, "SPI_finish failed: %s", SPI_result_code_string(err));
 
-    PopActiveSnapshot();
-    CommitTransactionCommand();
-  }
-  PG_CATCH();
-  {
-    MemoryContextSwitchTo(oldcontext);
-
-    HOLD_INTERRUPTS();
-
-    EmitErrorReport();
-    AbortOutOfAnyTransaction();
-    FlushErrorState();
-
-    RESUME_INTERRUPTS();
-
-    MemoryContextSwitchTo(oldcontext);
-    CurrentResourceOwner = oldowner;
-  }
-  PG_END_TRY();
+  PopActiveSnapshot();
+  CommitTransactionCommand();
 
   pgstat_report_activity(STATE_IDLE, NULL);
 }
@@ -125,7 +107,7 @@ static int on_body(http_parser* parser, const char* buf, size_t len) {
   struct ParsingData* data = parser->data;
   switch (data->oper) {
     case OPERATION_WRITE:
-      http_worker_insert_measurements(buf, len);
+      HttpWorkerInsertMeasurements(buf, len);
       return 0;
     default:
       return 1;
@@ -134,15 +116,30 @@ static int on_body(http_parser* parser, const char* buf, size_t len) {
 
 void InfluxHttpWorkerSendResponse(InfluxHttpWorkerState* state, int client_fd,
                                   int status_code, const char* reason,
-                                  const char* body) {
+                                  const char* content_type, const char* body) {
   ssize_t sent;
   StringInfoData response;
+  size_t body_length = body ? strlen(body) : 0;
+  time_t now = time(NULL);
+  char buf[128];
+
+  Assert(content_type != NULL);
 
   initStringInfo(&response);
   appendStringInfo(&response, "HTTP/1.1 %d %s\r\n", status_code, reason);
 
+  appendStringInfo(&response, "Content-Type: %s\r\n", content_type);
+
+  asctime_r(localtime(&now), buf);
+  buf[strlen(buf) - 1] = '0'; /* Truncate terminating newline */
+  appendStringInfo(&response, "Date: %s\r\n", buf);
+
+  if (body_length > 0)
+    appendStringInfo(&response, "Content-Length: %lu\r\n", body_length);
+
+  appendStringInfoString(&response, "\r\n");
+
   if (body) {
-    appendStringInfoString(&response, "\r\n");
     appendStringInfoString(&response, body);
     appendStringInfoString(&response, "\r\n");
   }
@@ -308,58 +305,92 @@ void InfluxHttpWorkerAcceptConnection(InfluxHttpWorkerState* state) {
  * the parser, and close the connection.
  */
 void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int client_fd) {
-  while (1) {
-    char buffer[BUFFER_SIZE] = {0};
-    ssize_t parsed, len;
-    HttpConnectionEntry* entry;
+  MemoryContext oldcontext = CurrentMemoryContext;
+  ResourceOwner oldowner = CurrentResourceOwner;
 
-    /* Not a datagram channel so recv and read are equivalent */
-    len = read(client_fd, buffer, BUFFER_SIZE - 1);
+  PG_TRY();
+  {
+    while (1) {
+      char buffer[BUFFER_SIZE] = {0};
+      ssize_t parsed, len;
+      HttpConnectionEntry* entry;
 
-    elog(DEBUG1, "received %ld bytes on %d:\n%s", len, client_fd, buffer);
+      /* Not a datagram channel so recv and read are equivalent */
+      len = read(client_fd, buffer, BUFFER_SIZE - 1);
 
-    /* If all data is processed, we just send a response and return */
-    if (len == 0 || (len == -1 && (errno == EAGAIN || errno == EWOULDBLOCK))) {
-      InfluxHttpWorkerSendResponse(state, client_fd, 204, "No Content", NULL);
-      InfluxHttpWorkerDelConnection(state, client_fd);
-      return;
-    }
+      elog(DEBUG1, "received %ld bytes on %d:\n%s", len, client_fd, buffer);
 
-    /* If we had an error, send a respose and close connection */
-    if (len == -1) {
-      ereport(LOG, errcode_for_socket_access(), errmsg("recv call failed: %m"));
-      InfluxHttpWorkerSendResponse(
-          state, client_fd, 500, "Internal Server Error", NULL);
-      InfluxHttpWorkerDelConnection(state, client_fd);
-      return;
-    }
+      /* If all data is processed, we just send a response and return */
+      if (len == 0 ||
+          (len == -1 && (errno == EAGAIN || errno == EWOULDBLOCK))) {
+        InfluxHttpWorkerSendResponse(state,
+                                     client_fd,
+                                     204,
+                                     "No Content",
+                                     "application/octet-stream",
+                                     NULL);
+        InfluxHttpWorkerDelConnection(state, client_fd);
+        return;
+      }
 
-    entry = http_worker_get_connection(state, client_fd);
-    if (entry == NULL) {
-      elog(LOG, "entry for file descriptor %d not found", client_fd);
-      break;
-    }
+      /* If we had an error, send a respose and close connection */
+      if (len == -1)
+        ereport(
+            ERROR, errcode_for_socket_access(), errmsg("recv call failed: %m"));
 
-    parsed = http_parser_execute(&entry->parser, &entry->settings, buffer, len);
+      entry = http_worker_get_connection(state, client_fd);
+      if (entry == NULL) {
+        elog(LOG, "entry for file descriptor %d not found", client_fd);
+        break;
+      }
 
-    elog(DEBUG1, "parsed %ld bytes of %ld", parsed, len);
+      parsed =
+          http_parser_execute(&entry->parser, &entry->settings, buffer, len);
 
-    if (parsed != len) {
-      elog(LOG,
-           "HTTP error %s when parsing data from %d: %s",
-           http_errno_name(HTTP_PARSER_ERRNO(&entry->parser)),
-           entry->read_fd,
-           http_errno_description(HTTP_PARSER_ERRNO(&entry->parser)));
-      InfluxHttpWorkerSendResponse(
-          state,
-          client_fd,
-          400,
-          "Bad Request",
-          http_errno_description(HTTP_PARSER_ERRNO(&entry->parser)));
-      InfluxHttpWorkerDelConnection(state, client_fd);
-      return;
+      elog(DEBUG1, "parsed %ld bytes of %ld", parsed, len);
+
+      if (parsed != len)
+        elog(ERROR,
+             "HTTP error %s when parsing data from %d: %s",
+             http_errno_name(HTTP_PARSER_ERRNO(&entry->parser)),
+             entry->read_fd,
+             http_errno_description(HTTP_PARSER_ERRNO(&entry->parser)));
     }
   }
+  PG_CATCH();
+  {
+    StringInfo edata_text = makeStringInfo();
+    ErrorData* edata;
+    Jsonb* edata_jb;
+
+    MemoryContextSwitchTo(oldcontext);
+
+    HOLD_INTERRUPTS();
+
+    EmitErrorReport();
+    AbortOutOfAnyTransaction();
+    edata = CopyErrorData();
+    FlushErrorState();
+
+    RESUME_INTERRUPTS();
+
+    MemoryContextSwitchTo(oldcontext);
+    CurrentResourceOwner = oldowner;
+
+    edata_jb = InfluxErrorDataGetJsonb(edata);
+
+    (void)JsonbToCString(edata_text, &edata_jb->root, VARSIZE(edata_jb));
+
+    InfluxHttpWorkerSendResponse(state,
+                                 client_fd,
+                                 400,
+                                 "Bad Request",
+                                 "application/json",
+                                 edata_text->data);
+    InfluxHttpWorkerDelConnection(state, client_fd);
+    destroyStringInfo(edata_text);
+  }
+  PG_END_TRY();
 }
 
 /*
