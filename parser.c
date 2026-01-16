@@ -27,7 +27,7 @@ static InfluxToken ParseFields(InfluxParseState* state,
                                InfluxDataPoint* data_point);
 
 PG_FUNCTION_INFO_V1(tokenize);
-PG_FUNCTION_INFO_V1(parse_line);
+PG_FUNCTION_INFO_V1(parse_text);
 
 #define SYNTAX_ERROR(EXPECT, TOKEN)                \
   do {                                             \
@@ -343,7 +343,7 @@ Jsonb* DataPointGetJsonB(InfluxDataPoint* data_point) {
   return JsonbValueToJsonb(res);
 }
 
-Datum parse_line(PG_FUNCTION_ARGS) {
+Datum parse_text(PG_FUNCTION_ARGS) {
   FuncCallContext* funcctx;
   InfluxParseState* state;
   text* input = PG_GETARG_TEXT_PP(0);

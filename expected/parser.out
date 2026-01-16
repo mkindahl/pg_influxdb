@@ -14,153 +14,153 @@
 -- License along with this program.  If not, see
 -- <https://www.gnu.org/licenses/>.
 create extension influxdb;
-select * from influxdb.parse_line('myMeasurement fieldKey=1u');
-                         parse_line                          
+select * from influxdb.parse_text('myMeasurement fieldKey=1u');
+                         parse_text                          
 -------------------------------------------------------------
  {"fields": {"fieldKey": 1}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement fieldKey=12485903u');
-                             parse_line                             
+select * from influxdb.parse_text('myMeasurement fieldKey=12485903u');
+                             parse_text                             
 --------------------------------------------------------------------
  {"fields": {"fieldKey": 12485903}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement fieldKey=true');
-                           parse_line                           
+select * from influxdb.parse_text('myMeasurement fieldKey=true');
+                           parse_text                           
 ----------------------------------------------------------------
  {"fields": {"fieldKey": true}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement fieldKey=false');
-                           parse_line                            
+select * from influxdb.parse_text('myMeasurement fieldKey=false');
+                           parse_text                            
 -----------------------------------------------------------------
  {"fields": {"fieldKey": false}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement fieldKey=t');
-                           parse_line                           
+select * from influxdb.parse_text('myMeasurement fieldKey=t');
+                           parse_text                           
 ----------------------------------------------------------------
  {"fields": {"fieldKey": true}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement fieldKey=f');
-                           parse_line                            
+select * from influxdb.parse_text('myMeasurement fieldKey=f');
+                           parse_text                            
 -----------------------------------------------------------------
  {"fields": {"fieldKey": false}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement fieldKey=TRUE');
-                           parse_line                           
+select * from influxdb.parse_text('myMeasurement fieldKey=TRUE');
+                           parse_text                           
 ----------------------------------------------------------------
  {"fields": {"fieldKey": true}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement fieldKey=FALSE');
-                           parse_line                            
+select * from influxdb.parse_text('myMeasurement fieldKey=FALSE');
+                           parse_text                            
 -----------------------------------------------------------------
  {"fields": {"fieldKey": false}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement fieldKey=tRue');
-                           parse_line                           
+select * from influxdb.parse_text('myMeasurement fieldKey=tRue');
+                           parse_text                           
 ----------------------------------------------------------------
  {"fields": {"fieldKey": true}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement fieldKey=fAlse');
-                           parse_line                            
+select * from influxdb.parse_text('myMeasurement fieldKey=fAlse');
+                           parse_text                            
 -----------------------------------------------------------------
  {"fields": {"fieldKey": false}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement fieldKey="this is a string"');
-                                  parse_line                                  
+select * from influxdb.parse_text('myMeasurement fieldKey="this is a string"');
+                                  parse_text                                  
 ------------------------------------------------------------------------------
  {"fields": {"fieldKey": "this is a string"}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurementName fieldKey="fieldValue" 1556813561098000000');
-                                               parse_line                                                
+select * from influxdb.parse_text('myMeasurementName fieldKey="fieldValue" 1556813561098000000');
+                                               parse_text                                                
 ---------------------------------------------------------------------------------------------------------
  {"time": 1556813561098000000, "fields": {"fieldKey": "fieldValue"}, "measurement": "myMeasurementName"}
 (1 row)
 
-select * from influxdb.parse_line('my\ Measurement fieldKey="string value"');
-                                parse_line                                 
+select * from influxdb.parse_text('my\ Measurement fieldKey="string value"');
+                                parse_text                                 
 ---------------------------------------------------------------------------
  {"fields": {"fieldKey": "string value"}, "measurement": "my Measurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement fieldKey="\"string\" within a string"');
-                                       parse_line                                       
+select * from influxdb.parse_text('myMeasurement fieldKey="\"string\" within a string"');
+                                       parse_text                                       
 ----------------------------------------------------------------------------------------
  {"fields": {"fieldKey": "\"string\" within a string"}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line($$myMeasurement fieldKey='"string" within a string'$$);
-                                       parse_line                                       
+select * from influxdb.parse_text($$myMeasurement fieldKey='"string" within a string'$$);
+                                       parse_text                                       
 ----------------------------------------------------------------------------------------
  {"fields": {"fieldKey": "\"string\" within a string"}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement,tag\ Key1=tag\ Value1,tag\ Key2=tag\ Value2 fieldKey=100');
-                                                         parse_line                                                          
+select * from influxdb.parse_text('myMeasurement,tag\ Key1=tag\ Value1,tag\ Key2=tag\ Value2 fieldKey=100');
+                                                         parse_text                                                          
 -----------------------------------------------------------------------------------------------------------------------------
  {"tags": {"tag Key1": "tag Value1", "tag Key2": "tag Value2"}, "fields": {"fieldKey": 100}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement,tag1=value1,tag2=value2 fieldKey="fieldValue" 1556813561098000000');
-                                                                    parse_line                                                                     
+select * from influxdb.parse_text('myMeasurement,tag1=value1,tag2=value2 fieldKey="fieldValue" 1556813561098000000');
+                                                                    parse_text                                                                     
 ---------------------------------------------------------------------------------------------------------------------------------------------------
  {"tags": {"tag1": "value1", "tag2": "value2"}, "time": 1556813561098000000, "fields": {"fieldKey": "fieldValue"}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement fieldKey=1.0');
-                          parse_line                           
+select * from influxdb.parse_text('myMeasurement fieldKey=1.0');
+                          parse_text                           
 ---------------------------------------------------------------
  {"fields": {"fieldKey": 1.0}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement fieldKey=1');
-                         parse_line                          
+select * from influxdb.parse_text('myMeasurement fieldKey=1');
+                         parse_text                          
 -------------------------------------------------------------
  {"fields": {"fieldKey": 1}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement fieldKey=-1.234456e+78');
-                                                                 parse_line                                                                 
+select * from influxdb.parse_text('myMeasurement fieldKey=-1.234456e+78');
+                                                                 parse_text                                                                 
 --------------------------------------------------------------------------------------------------------------------------------------------
  {"fields": {"fieldKey": -1234456000000000000000000000000000000000000000000000000000000000000000000000000}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement fieldKey=1i');
-                         parse_line                          
+select * from influxdb.parse_text('myMeasurement fieldKey=1i');
+                         parse_text                          
 -------------------------------------------------------------
  {"fields": {"fieldKey": 1}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement fieldKey=12485903i');
-                             parse_line                             
+select * from influxdb.parse_text('myMeasurement fieldKey=12485903i');
+                             parse_text                             
 --------------------------------------------------------------------
  {"fields": {"fieldKey": 12485903}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement fieldKey=-12485903i');
-                             parse_line                              
+select * from influxdb.parse_text('myMeasurement fieldKey=-12485903i');
+                             parse_text                              
 ---------------------------------------------------------------------
  {"fields": {"fieldKey": -12485903}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('myMeasurement,tagKey=🍭 fieldKey="Launch 🚀" 1556813561098000000');
-                                                          parse_line                                                          
+select * from influxdb.parse_text('myMeasurement,tagKey=🍭 fieldKey="Launch 🚀" 1556813561098000000');
+                                                          parse_text                                                          
 ------------------------------------------------------------------------------------------------------------------------------
  {"tags": {"tagKey": "🍭"}, "time": 1556813561098000000, "fields": {"fieldKey": "Launch 🚀"}, "measurement": "myMeasurement"}
 (1 row)
 
-select * from influxdb.parse_line('disk,mode=0,path=0i free=527806466i,total=10i 1574753955000000000
+select * from influxdb.parse_text('disk,mode=0,path=0i free=527806466i,total=10i 1574753955000000000
 disk,mode=0,path=0i free=527806499i,total=20i 1574753956000000000');
-                                                            parse_line                                                            
+                                                            parse_text                                                            
 ----------------------------------------------------------------------------------------------------------------------------------
  {"tags": {"mode": 0, "path": 0}, "time": 1574753955000000000, "fields": {"free": 527806466, "total": 10}, "measurement": "disk"}
  {"tags": {"mode": 0, "path": 0}, "time": 1574753956000000000, "fields": {"free": 527806499, "total": 20}, "measurement": "disk"}
