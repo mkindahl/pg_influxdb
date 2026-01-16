@@ -10,7 +10,7 @@ This is a re-implementation of the work done in [`pg_influx`][1] and
 focused on providing a more complete API resembling InfluxDB API
 version 1 and version 2 with both UDP and HTTP support. It also aims
 to have better support for the InfluxDB Line Protocol and be a true
-replacement for using InfluxDB.
+replacement for using InfluxDB to the extent that it is possible.
 
 ## Building and Installing
 
@@ -30,6 +30,15 @@ make && sudo make install
 ```
 
 [pgdg]: https://wiki.postgresql.org/wiki/Apt
+
+Add the database you want the workers to connect to in the
+`postgresql.conf` file and add `influxdb` to
+`shared_preload_libraries`:
+
+```
+shared_preload_libraries = `influxdb`
+influxdb.database_name = 'my_database'
+```
 
 ## InfluxDB Line Protocol
 
@@ -104,8 +113,14 @@ also `tRue` is a boolean (if not quoted).
 
 ## HTTP Endpoint
 
-```
-curl -i -XPOST 'http://localhost:8086/write?db=mydb' --data-binary 'cpu_load_short,host=server01,region=us-west value=0.64 1434055562000000000'`
+Here is an example that can be used to feed data to the HTTP
+endpoint. Notice that you cannot select the database to write to since
+the worker has to connect to a database before starting and then has
+to keep connected to that database.
+
+```bash
+curl -i -XPOST 'http://localhost:8086/write \
+    --data-binary 'cpu_load_short,host=server01,region=us-west value=0.64 1434055562000000000'`
 ```
 
 ## Options
@@ -124,6 +139,40 @@ The following options are available:
 : then later decide what measurements are interesting and how the
 : table definitions should look. Default is `off`. This option can
 : be set at any time and not only in the configuration file.
+
+`influxdb.http_workers` (`integer`)
+: The number of HTTP workers to spawn when starting the
+: server. Default is to spawn 4 workers.
+
+`influxdb.http_service` (`string`)
+: Service name or port number to use for the HTTP service. If you use
+: a string here, it will be looked up using `getservbyname` so you can
+: use something like `http` if you want. Default is to use the same
+: port as InfluxDB, which is 8086.
+
+`influxdb.database_name` (`string`)
+: Name of the database that the HTTP workers shall connect to.
+
+`influxdb.schema_name` (`string`)
+: Name of the schema where all measurement tables are stored. Default
+: is `measurements`.
+
+## Functions
+
+There are some functions available, which are mostly for debugging and
+testing:
+
+`FUNCTION influxdb.parse_text(text) RETURNS SETOF jsonb`
+: Parse an InfluxDB text block into multiple lines and return the
+: parsed result as JSONB. This is mostly intended to test the parser.
+
+`FUNCTION influxdb.tokenize(text) RETURNS TABLE(kind integer, value text)`
+: Process a text consisting of InfluxDB protocol lines and return the
+: tokens. Intended for testing the tokenizer.
+
+`PROCEDURE process_text(regnamespace, text)`
+: Procedure for processing a set of InfluxDB protocol lines and insert
+: them into the correct table.
 
 ## Copyrights
 
