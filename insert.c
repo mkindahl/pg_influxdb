@@ -66,14 +66,14 @@ static bool is_time_type(Oid typid) {
  * in keys between fields and tags will keep fields in the _fields
  * column.
  */
-static List* InfluxFillAndRemovePairs(List* pairs, AttInMetadata* attinmeta,
-                                      Datum* values, char* cnulls) {
+static void InfluxFillAndRemovePairs(List** pairs, AttInMetadata* attinmeta,
+                                     Datum* values, char* cnulls) {
   ListCell* cell;
   TupleDesc tupdesc = attinmeta->tupdesc;
-  List* new_pairs = pairs;
+  List* new_pairs = *pairs;
   ErrorSaveContext escontext = {T_ErrorSaveContext};
 
-  foreach (cell, pairs) {
+  foreach (cell, *pairs) {
     InfluxPair* pair = lfirst(cell);
     StringInfo key = InfluxTokenGetString(&pair->key);
     int attnum = SPI_fnumber(tupdesc, key->data);
@@ -91,7 +91,9 @@ static List* InfluxFillAndRemovePairs(List* pairs, AttInMetadata* attinmeta,
       }
     }
   }
-  return new_pairs;
+
+  if (new_pairs != *pairs)
+    *pairs = new_pairs;
 }
 
 /*
@@ -163,8 +165,8 @@ static bool InfluxFillValues(InfluxDataPoint* data_point, TupleDesc tupdesc,
     cnulls[time_attnum - 1] = ' ';
   }
 
-  InfluxFillAndRemovePairs(data_point->tags, attinmeta, values, cnulls);
-  InfluxFillAndRemovePairs(data_point->fields, attinmeta, values, cnulls);
+  InfluxFillAndRemovePairs(&data_point->tags, attinmeta, values, cnulls);
+  InfluxFillAndRemovePairs(&data_point->fields, attinmeta, values, cnulls);
 
   tags_attnum = SPI_fnumber(tupdesc, "_tags");
   if (tags_attnum > 0) {
