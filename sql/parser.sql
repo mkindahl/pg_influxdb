@@ -40,5 +40,7 @@ select * from influxdb.parse_line('myMeasurement fieldKey=1i');
 select * from influxdb.parse_line('myMeasurement fieldKey=12485903i');
 select * from influxdb.parse_line('myMeasurement fieldKey=-12485903i');
 select * from influxdb.parse_line('myMeasurement,tagKey=🍭 fieldKey="Launch 🚀" 1556813561098000000');
+select * from influxdb.parse_line('disk,mode=0,path=0i free=527806466i,total=10i 1574753955000000000
+disk,mode=0,path=0i free=527806499i,total=20i 1574753956000000000');
 
 drop extension influxdb;

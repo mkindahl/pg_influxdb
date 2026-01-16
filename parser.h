@@ -42,16 +42,17 @@ typedef struct yy_buffer_state* YY_BUFFER_STATE;
  * for end-of-input.
  */
 typedef enum InfluxTokenKind {
-  TOKEN_KIND_END = 0,     /* Used for end of input */
-  TOKEN_KIND_FLOAT = 128, /* What looks like a real float */
-  TOKEN_KIND_NUMBER,      /* Sequence of digits, which is either a float or a
-                             timestamp */
-  TOKEN_KIND_INTEGER,     /* Sequence of digits with a trailing "i" */
-  TOKEN_KIND_UINTEGER,    /* Sequence of digits with a trailing "u" */
-  TOKEN_KIND_BLANK,       /* One or more whitespace characters */
-  TOKEN_KIND_STRING,      /* String with quotes */
-  TOKEN_KIND_SYMBOL,      /* String without quotes */
-  TOKEN_KIND_BOOLEAN,     /* String without quotes that looks like a boolean */
+  TOKEN_KIND_END_OF_INPUT = 0,
+  TOKEN_KIND_END_OF_LINE = 256,
+  TOKEN_KIND_FLOAT,    /* What looks like a real float, with decimal point */
+  TOKEN_KIND_NUMBER,   /* Sequence of digits, which is either a float or a
+                          timestamp */
+  TOKEN_KIND_INTEGER,  /* Sequence of digits with a trailing "i" */
+  TOKEN_KIND_UINTEGER, /* Sequence of digits with a trailing "u" */
+  TOKEN_KIND_BLANK,    /* One or more whitespace characters */
+  TOKEN_KIND_STRING,   /* String with quotes */
+  TOKEN_KIND_SYMBOL,   /* String without quotes */
+  TOKEN_KIND_BOOLEAN,  /* String without quotes that looks like a boolean */
 } InfluxTokenKind;
 
 typedef struct InfluxToken {
@@ -75,22 +76,22 @@ typedef struct InfluxDataPoint {
 typedef struct InfluxParseState {
   yyscan_t scanner;
   YY_BUFFER_STATE buf;
-  InfluxDataPoint* data_point;
 } InfluxParseState;
 
 extern void InfluxParseBuffer(InfluxDataPoint* data_point, char* buf,
                               size_t len);
 extern InfluxToken InfluxNextToken(InfluxParseState* state);
-extern void InfluxParseStateInit(InfluxParseState* state,
-                                 InfluxDataPoint* data_point, char* buf,
+extern void InfluxParseStateInit(InfluxParseState* state, char* buf,
                                  size_t len);
 extern void InfluxParseStateFinish(InfluxParseState* state);
+extern bool InfluxParseStateHasMore(InfluxParseState* state);
 extern const char* KindName(int kind);
 
 extern StringInfo InfluxTokenGetString(InfluxToken* token);
 extern JsonbValue InfluxTokenGetJsonbValue(InfluxToken* token);
 extern JsonbValue* InfluxJsonbAddPairs(JsonbParseState** state, List* items);
 extern Jsonb* DataPointGetJsonB(InfluxDataPoint* data_point);
-extern void InfluxParseDataPoint(InfluxParseState* state);
+extern void InfluxParseDataPoint(InfluxParseState* state,
+                                 InfluxDataPoint* data_point);
 
 #endif /*INFLUXDB_PARSER_H_ */

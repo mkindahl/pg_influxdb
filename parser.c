@@ -21,8 +21,10 @@
 #include <stdlib.h>
 #include <string.h>
 
-static InfluxToken ParseTags(InfluxParseState* state);
-static InfluxToken ParseFields(InfluxParseState* state);
+static InfluxToken ParseTags(InfluxParseState* state,
+                             InfluxDataPoint* data_point);
+static InfluxToken ParseFields(InfluxParseState* state,
+                               InfluxDataPoint* data_point);
 
 PG_FUNCTION_INFO_V1(tokenize);
 PG_FUNCTION_INFO_V1(parse_line);
@@ -39,7 +41,7 @@ PG_FUNCTION_INFO_V1(parse_line);
   } while (0)
 
 static inline bool TokenIsValid(InfluxToken token) {
-  return token.kind != TOKEN_KIND_END;
+  return token.kind != TOKEN_KIND_END_OF_INPUT;
 }
 
 static inline bool TokenIsKey(InfluxToken token) {
@@ -70,7 +72,8 @@ static inline bool TokenIsValue(InfluxToken token) {
 
 const char* KindName(int kind) {
   static const char* kind_name[] = {
-      [TOKEN_KIND_END] = "END",
+      [TOKEN_KIND_END_OF_INPUT] = "END",
+      [TOKEN_KIND_END_OF_LINE] = "EOL",
       [TOKEN_KIND_FLOAT] = "FLOAT",
       [TOKEN_KIND_NUMBER] = "NUMBER",
       [TOKEN_KIND_INTEGER] = "INTEGER",
@@ -111,14 +114,15 @@ static void ParseKeyValue(InfluxParseState* state, InfluxToken* key,
     SYNTAX_ERROR("value", value);
 }
 
-static InfluxToken ParseTags(InfluxParseState* state) {
+static InfluxToken ParseTags(InfluxParseState* state,
+                             InfluxDataPoint* data_point) {
   InfluxToken next;
   while (true) {
     InfluxPair* tag = palloc(sizeof(*tag));
 
     ParseKeyValue(state, &tag->key, &tag->val);
 
-    state->data_point->tags = lappend(state->data_point->tags, tag);
+    data_point->tags = lappend(data_point->tags, tag);
 
     next = InfluxNextToken(state);
 
@@ -131,7 +135,8 @@ static InfluxToken ParseTags(InfluxParseState* state) {
   return next;
 }
 
-static InfluxToken ParseFields(InfluxParseState* state) {
+static InfluxToken ParseFields(InfluxParseState* state,
+                               InfluxDataPoint* data_point) {
   InfluxToken next;
 
   while (true) {
@@ -139,11 +144,11 @@ static InfluxToken ParseFields(InfluxParseState* state) {
 
     ParseKeyValue(state, &field->key, &field->val);
 
-    state->data_point->fields = lappend(state->data_point->fields, field);
+    data_point->fields = lappend(data_point->fields, field);
 
     next = InfluxNextToken(state);
 
-    if (next.kind == TOKEN_KIND_BLANK || next.kind == TOKEN_KIND_END)
+    if (next.kind == TOKEN_KIND_BLANK || next.kind == TOKEN_KIND_END_OF_INPUT)
       break;
 
     if (next.kind != ',')
@@ -158,30 +163,37 @@ static InfluxToken ParseFields(InfluxParseState* state) {
   return next;
 }
 
-void InfluxParseDataPoint(InfluxParseState* state) {
+void InfluxParseDataPoint(InfluxParseState* state,
+                          InfluxDataPoint* data_point) {
   InfluxToken measurement, token;
+
+  memset(data_point, 0, sizeof(*data_point));
 
   measurement = InfluxNextToken(state);
   if (measurement.kind != TOKEN_KIND_SYMBOL &&
       measurement.kind != TOKEN_KIND_STRING)
     SYNTAX_ERROR("measurement name", &measurement);
 
-  state->data_point->measurement = measurement;
+  data_point->measurement = measurement;
 
   token = InfluxNextToken(state);
   if (token.kind == ',')
-    token = ParseTags(state);
+    token = ParseTags(state, data_point);
 
   if (token.kind != TOKEN_KIND_BLANK)
     SYNTAX_ERROR("blank", &token);
 
-  token = ParseFields(state);
+  token = ParseFields(state, data_point);
   if (token.kind == TOKEN_KIND_BLANK) {
     token = InfluxNextToken(state);
     if (token.kind != TOKEN_KIND_NUMBER)
       SYNTAX_ERROR("timestamp", &token);
-    state->data_point->timestamp = token;
+    data_point->timestamp = token;
   }
+  token = InfluxNextToken(state);
+  if (token.kind != TOKEN_KIND_END_OF_INPUT &&
+      token.kind != TOKEN_KIND_END_OF_LINE)
+    SYNTAX_ERROR("end of line or end of input", &token);
 }
 
 static StringInfo RemoveBackslashes(const char* str, size_t len) {
@@ -294,6 +306,18 @@ Jsonb* DataPointGetJsonB(InfluxDataPoint* data_point) {
   jb_val = InfluxTokenGetJsonbValue(&data_point->measurement);
   pushJsonbValue(&state, WJB_VALUE, &jb_val);
 
+  /* Add timestamp, if there is one */
+  if (data_point->timestamp.kind == TOKEN_KIND_NUMBER) {
+    jb_key.type = jbvString;
+    jb_key.val.string.val = "time";
+    jb_key.val.string.len = sizeof("time") - 1;
+
+    pushJsonbValue(&state, WJB_KEY, &jb_key);
+
+    jb_val = InfluxTokenGetJsonbValue(&data_point->timestamp);
+    pushJsonbValue(&state, WJB_VALUE, &jb_val);
+  }
+
   /* Add tags, if there are any */
   if (data_point->tags != NIL) {
     jb_key.type = jbvString;
@@ -320,17 +344,40 @@ Jsonb* DataPointGetJsonB(InfluxDataPoint* data_point) {
 }
 
 Datum parse_line(PG_FUNCTION_ARGS) {
-  Jsonb* res;
-  InfluxParseState state;
+  FuncCallContext* funcctx;
+  InfluxParseState* state;
   text* input = PG_GETARG_TEXT_PP(0);
-  InfluxDataPoint data_point;
 
-  InfluxParseStateInit(
-      &state, &data_point, VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input));
-  InfluxParseDataPoint(&state);
-  res = DataPointGetJsonB(state.data_point);
-  InfluxParseStateFinish(&state);
-  PG_RETURN_POINTER(res);
+  if (SRF_IS_FIRSTCALL()) {
+    MemoryContext oldcontext;
+
+    funcctx = SRF_FIRSTCALL_INIT();
+    oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
+
+    state = palloc(sizeof(*state));
+
+    InfluxParseStateInit(state, VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input));
+
+    funcctx->user_fctx = state;
+
+    MemoryContextSwitchTo(oldcontext);
+  }
+
+  funcctx = SRF_PERCALL_SETUP();
+  state = funcctx->user_fctx;
+
+  if (InfluxParseStateHasMore(state)) {
+    Jsonb* res;
+    InfluxDataPoint data_point;
+
+    InfluxParseDataPoint(state, &data_point);
+    res = DataPointGetJsonB(&data_point);
+    SRF_RETURN_NEXT(funcctx, PointerGetDatum(res));
+  }
+
+  InfluxParseStateFinish(state);
+
+  SRF_RETURN_DONE(funcctx);
 }
 
 /*
@@ -344,7 +391,6 @@ Datum tokenize(PG_FUNCTION_ARGS) {
   InfluxParseState* state;
   FuncCallContext* funcctx;
   InfluxToken token;
-  InfluxDataPoint data_point;
 
   if (SRF_IS_FIRSTCALL()) {
     TupleDesc tupdesc;
@@ -366,8 +412,7 @@ Datum tokenize(PG_FUNCTION_ARGS) {
     funcctx->attinmeta = TupleDescGetAttInMetadata(tupdesc);
     funcctx->user_fctx = state;
 
-    InfluxParseStateInit(
-        state, &data_point, VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input));
+    InfluxParseStateInit(state, VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input));
 
     MemoryContextSwitchTo(oldcontext);
   }

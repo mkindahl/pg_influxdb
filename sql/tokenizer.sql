@@ -70,6 +70,9 @@ set influxdb.keep_quotes to on;
 select * from influxdb.tokenize('myMeasurement fieldKey="this is a string"');
 select * from influxdb.tokenize($$myMeasurement fieldKey='this is a string'$$);
 
+-- Newlines between lines are allowed by the protocol
+select * from influxdb.tokenize(E'dab fieldKey="this is a string"\ndab fieldKey=1i');
+
 -- These should generate reasonable error messages
 \set ON_ERROR_STOP 0
 -- Non-terminated string should generate an error.

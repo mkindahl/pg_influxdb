@@ -47,16 +47,16 @@
 SIGN       [+-]
 DIGITS     [[:digit:]]+
 NUMBER     {SIGN}?{DIGITS}
-SYMBOL     [^,= \\]([^,= \\]|\\.)*
+SYMBOL     [^,= \\\n]([^,= \\\n]|\\.)*
 FLOAT      {NUMBER}\.{DIGITS}([eE]{SIGN}{DIGITS})?
 UTF8-2     [\xc0-\xdf][\x80-\xbf]
 UTF8-3     [\xe0-\xef][\x80-\xbf][\x80-\xbf]
 UTF8-4     [\xf0-\xf7][\x80-\xbf][\x80-\xbf][\x80-\xbf]
 UTF8       {UTF8-2}|{UTF8-3}|{UTF8-4}
-QQSTRING   \"(\\(?s:.)|{UTF8}|[^\\\n\"])+\"
-QSTRING    '(\\(?s:.)|{UTF8}|[^\\\n'])+\'
-QQUNTERM   \"(\\(?s:.)|{UTF8}|[^\\\n\"])+
-QUNTERM    '(\\(?s:.)|{UTF8}|[^\\\n'])+
+QQSTRING   \"(\\.|{UTF8}|[^\\\n\"])+\"
+QSTRING    '(\\.|{UTF8}|[^\\\n'])+\'
+QQUNTERM   \"(\\.|{UTF8}|[^\\\n\"])+
+QUNTERM    '(\\.|{UTF8}|[^\\\n'])+
 
 %option reentrant never-interactive 8bit
 %option header-file="tokenizer_lex.h"
@@ -78,6 +78,7 @@ QUNTERM    '(\\(?s:.)|{UTF8}|[^\\\n'])+
 {SYMBOL}          return TOKEN_KIND_SYMBOL;
 {QUNTERM}         |
 {QQUNTERM}        SYNTAX_ERROR("EOF in string literal")
+\r?\n             return TOKEN_KIND_END_OF_LINE;
 (?s:.)            return *yytext;
 %%
 
@@ -98,10 +99,8 @@ static InfluxToken MakeToken(InfluxTokenKind kind, char *ptr, size_t len) {
  * TODO: we could switch the buffer to use a StringInfo instead and
  * initializer it using initReadOnlyStringInfo().
  */
-void InfluxParseStateInit(InfluxParseState *state, InfluxDataPoint* data_point, char *buf, size_t len) {
+void InfluxParseStateInit(InfluxParseState *state, char *buf, size_t len) {
   memset(state, 0, sizeof(*state));
-  memset(data_point, 0, sizeof(*data_point));
-  state->data_point = data_point;
   yylex_init(&state->scanner);
   state->buf = yy_scan_bytes(buf, len, state->scanner);
 }
@@ -111,13 +110,26 @@ void InfluxParseStateFinish(InfluxParseState *state) {
   yylex_destroy(state->scanner);
 }
 
+bool InfluxParseStateHasMore(InfluxParseState *state) {
+    struct yyguts_t *yyg = (struct yyguts_t*)state->scanner;
+    int pos, remaining;
+    
+    if (!YY_CURRENT_BUFFER)
+        return false;
+    
+    pos = yyg->yy_c_buf_p - YY_CURRENT_BUFFER_LVALUE->yy_ch_buf;
+    remaining = yyg->yy_n_chars - pos;
+    
+    if (YY_CURRENT_BUFFER_LVALUE->yy_buffer_status == YY_BUFFER_EOF_PENDING)
+        return false;
+    
+    return (remaining > 0);
+}
+
 InfluxToken InfluxNextToken(InfluxParseState *state) {
   int kind = yylex(state->scanner);
   char *text = yyget_text(state->scanner);
   size_t leng = yyget_leng(state->scanner);
-#if 0
-  elog(NOTICE, "kind: %s text: '%s', leng: %lu", KindName(kind), text, leng);
-#endif
   return MakeToken(kind, text, leng);
 }
 
