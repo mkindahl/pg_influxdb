@@ -117,41 +117,36 @@ f_bool  | f
 f_text  | magic
 
 \x off
--- Had an issue where if all fields were removed, it would try to use
--- an invalid pointer.
+-- Had an issue where if all fields or tags were removed, it would try
+-- to use an invalid pointer. Also, if the timestamp is missing, it
+-- will also cause issues.
 create table testing.more_magic(_time timestamp, level int, free int, _tags jsonb, _fields jsonb);
 CALL influxdb.process_text('testing', E'more_magic,level=0,path=0i free=527806464i,total=0i 1574753954000000000');
 CALL influxdb.process_text('testing', E'more_magic,level=1 free=527806464i,total=0i 1574753955000000000');
 CALL influxdb.process_text('testing', E'more_magic,level=2,path=0i free=12345i 1574753956000000000');
 CALL influxdb.process_text('testing', E'more_magic,level=3 free=12345i 1574753957000000000');
-\x on
 select * from testing.more_magic order by _time;
--[ RECORD 1 ]---------------------
-_time   | Tue Nov 26 07:39:14 2019
-level   | 0
-free    | 527806464
-_tags   | {"path": 0}
-_fields | {"total": 0}
--[ RECORD 2 ]---------------------
-_time   | Tue Nov 26 07:39:15 2019
-level   | 1
-free    | 527806464
-_tags   | {}
-_fields | {"total": 0}
--[ RECORD 3 ]---------------------
-_time   | Tue Nov 26 07:39:16 2019
-level   | 2
-free    | 12345
-_tags   | {"path": 0}
-_fields | {}
--[ RECORD 4 ]---------------------
-_time   | Tue Nov 26 07:39:17 2019
-level   | 3
-free    | 12345
-_tags   | {}
-_fields | {}
+          _time           | level |   free    |    _tags    |   _fields    
+--------------------------+-------+-----------+-------------+--------------
+ Tue Nov 26 07:39:14 2019 |     0 | 527806464 | {"path": 0} | {"total": 0}
+ Tue Nov 26 07:39:15 2019 |     1 | 527806464 | {}          | {"total": 0}
+ Tue Nov 26 07:39:16 2019 |     2 |     12345 | {"path": 0} | {}
+ Tue Nov 26 07:39:17 2019 |     3 |     12345 | {}          | {}
+(4 rows)
 
-\x off
+CALL influxdb.process_text('testing', E'more_magic,level=4,path=1i free=23456i,total=4711i');
+-- Skip the timestamp since the server time is used. We just check
+-- that it does not crash.
+select level, free, _tags, _fields from testing.more_magic order by level;
+ level |   free    |    _tags    |     _fields     
+-------+-----------+-------------+-----------------
+     0 | 527806464 | {"path": 0} | {"total": 0}
+     1 | 527806464 | {}          | {"total": 0}
+     2 |     12345 | {"path": 0} | {}
+     3 |     12345 | {}          | {}
+     4 |     23456 | {"path": 1} | {"total": 4711}
+(5 rows)
+
 drop schema testing cascade;
 NOTICE:  drop cascades to 4 other objects
 DETAIL:  drop cascades to table testing.disk

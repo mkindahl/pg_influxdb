@@ -40,10 +40,6 @@ PG_FUNCTION_INFO_V1(parse_text);
                       (TOKEN)->buf));              \
   } while (0)
 
-static inline bool TokenIsValid(InfluxToken token) {
-  return token.kind != TOKEN_KIND_END_OF_INPUT;
-}
-
 static inline bool TokenIsKey(InfluxToken token) {
   switch (token.kind) {
     case TOKEN_KIND_SYMBOL:
@@ -397,7 +393,7 @@ Datum tokenize(PG_FUNCTION_ARGS) {
   state = funcctx->user_fctx;
 
   token = InfluxNextToken(state);
-  if (TokenIsValid(token)) {
+  if (InfluxTokenIsValid(token)) {
     Datum values[2];
     bool nulls[2];
     HeapTuple tuple;

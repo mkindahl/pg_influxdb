@@ -78,6 +78,10 @@ typedef struct InfluxParseState {
   YY_BUFFER_STATE buf;
 } InfluxParseState;
 
+static inline bool InfluxTokenIsValid(InfluxToken token) {
+  return token.kind != TOKEN_KIND_END_OF_INPUT;
+}
+
 extern void InfluxParseBuffer(InfluxDataPoint* data_point, char* buf,
                               size_t len);
 extern InfluxToken InfluxNextToken(InfluxParseState* state);

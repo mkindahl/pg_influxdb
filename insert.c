@@ -34,6 +34,8 @@
 #include <utils/lsyscache.h>
 #include <utils/rel.h>
 
+#include <sys/time.h>
+
 #include "influxdb.h"
 #include "plans.h"
 #include "table.h"
@@ -133,7 +135,14 @@ static bool InfluxFillValues(InfluxDataPoint* data_point, TupleDesc tupdesc,
       return false;
 
     errno = 0;
-    timestamp = strtou64(data_point->timestamp.buf, &endptr, 0);
+
+    if (InfluxTokenIsValid(data_point->timestamp)) {
+      timestamp = strtou64(data_point->timestamp.buf, &endptr, 0);
+    } else {
+      struct timeval tv;
+      gettimeofday(&tv, NULL);
+      timestamp = 1.0e9 * tv.tv_sec + 1.0e3 * tv.tv_usec;
+    }
 
     if ((errno && errno != ERANGE) || endptr == data_point->timestamp.buf) {
       if (raise_error)
