@@ -19,4 +19,4 @@
 
 CREATE FUNCTION @extschema@.parse_line(text) RETURNS SETOF jsonb AS 'MODULE_PATHNAME' LANGUAGE C;
 CREATE FUNCTION @extschema@.tokenize(text) RETURNS TABLE(kind integer, value text) AS 'MODULE_PATHNAME' LANGUAGE C;
-CREATE PROCEDURE @extschema@.process_line(regnamespace, text) AS 'MODULE_PATHNAME' LANGUAGE C;
+CREATE PROCEDURE @extschema@.process_text(regnamespace, text) AS 'MODULE_PATHNAME' LANGUAGE C;

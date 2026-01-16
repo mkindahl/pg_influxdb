@@ -44,29 +44,41 @@ PG_MODULE_MAGIC;
 
 void _PG_init(void);
 
-PG_FUNCTION_INFO_V1(process_line);
+PG_FUNCTION_INFO_V1(process_text);
 
 bool influxdb_keep_quotes = false;
 bool influxdb_auto_create_table = false;
 
-Datum process_line(PG_FUNCTION_ARGS) {
+void process_text_internal(Oid nspid, char* buf, size_t len) {
+  InfluxParseState state;
+
+  InfluxParseStateInit(&state, buf, len);
+
+  while (InfluxParseStateHasMore(&state)) {
+    InfluxDataPoint data_point;
+    InfluxParseDataPoint(&state, &data_point);
+    InfluxInsertDataPoint(nspid, &data_point, true);
+  }
+
+  InfluxParseStateFinish(&state);
+}
+
+Datum process_text(PG_FUNCTION_ARGS) {
   Oid nspid = PG_GETARG_OID(0);
   text* input = PG_GETARG_TEXT_PP(1);
-  InfluxParseState state;
-  InfluxDataPoint data_point;
   int err;
 
   if ((err = SPI_connect()) != SPI_OK_CONNECT)
     elog(ERROR, "SPI_connect failed: %s", SPI_result_code_string(err));
 
-  InfluxParseStateInit(
-      &state, &data_point, VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input));
-  InfluxParseDataPoint(&state);
-  InfluxInsertDataPoint(nspid, &data_point, true);
-  InfluxParseStateFinish(&state);
+  PushActiveSnapshot(GetTransactionSnapshot());
+
+  process_text_internal(nspid, VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input));
 
   if ((err = SPI_finish()) != SPI_OK_FINISH)
     elog(ERROR, "SPI_finish failed: %s", SPI_result_code_string(err));
+
+  PopActiveSnapshot();
 
   PG_RETURN_VOID();
 }

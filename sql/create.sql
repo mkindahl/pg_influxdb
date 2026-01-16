@@ -20,12 +20,12 @@ create schema testing;
 show influxdb.auto_create_table;
 
 \set ON_ERROR_STOP 0
-call influxdb.process_line('testing', E'disk free=527806464i,total=0i 1574753954000000000');
+call influxdb.process_text('testing', E'disk free=527806464i,total=0i 1574753954000000000');
 \set ON_ERROR_STOP 1
 
 set influxdb.auto_create_table to on;
 
-call influxdb.process_line('testing', E'disk free=527806464i,total=0i 1574753954000000000');
+call influxdb.process_text('testing', E'disk free=527806464i,total=0i 1574753954000000000');
 
 \d testing.*
 \x on
@@ -46,7 +46,7 @@ set free = (_fields->>'free')::integer,
 -- constructed for the insert statement.
 \x on
 select * from testing.disk;
-call influxdb.process_line('testing', E'disk free=12345678i,total=0i 1574753955000000000');
+call influxdb.process_text('testing', E'disk free=12345678i,total=0i 1574753955000000000');
 select * from testing.disk;
 \x off
 
