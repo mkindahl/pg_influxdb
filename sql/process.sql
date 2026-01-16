@@ -57,5 +57,18 @@ CALL influxdb.process_text('testing', 'all_types f_float=3.14,f_bool=False,f_tex
 select * from testing.all_types;
 \x off
 
+-- Had an issue where if all fields were removed, it would try to use
+-- an invalid pointer.
+create table testing.more_magic(_time timestamp, level int, free int, _tags jsonb, _fields jsonb);
+
+CALL influxdb.process_text('testing', E'more_magic,level=0,path=0i free=527806464i,total=0i 1574753954000000000');
+CALL influxdb.process_text('testing', E'more_magic,level=1 free=527806464i,total=0i 1574753955000000000');
+CALL influxdb.process_text('testing', E'more_magic,level=2,path=0i free=12345i 1574753956000000000');
+CALL influxdb.process_text('testing', E'more_magic,level=3 free=12345i 1574753957000000000');
+
+\x on
+select * from testing.more_magic order by _time;
+\x off
+
 drop schema testing cascade;
 drop extension influxdb;

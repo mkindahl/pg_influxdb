@@ -117,9 +117,45 @@ f_bool  | f
 f_text  | magic
 
 \x off
+-- Had an issue where if all fields were removed, it would try to use
+-- an invalid pointer.
+create table testing.more_magic(_time timestamp, level int, free int, _tags jsonb, _fields jsonb);
+CALL influxdb.process_text('testing', E'more_magic,level=0,path=0i free=527806464i,total=0i 1574753954000000000');
+CALL influxdb.process_text('testing', E'more_magic,level=1 free=527806464i,total=0i 1574753955000000000');
+CALL influxdb.process_text('testing', E'more_magic,level=2,path=0i free=12345i 1574753956000000000');
+CALL influxdb.process_text('testing', E'more_magic,level=3 free=12345i 1574753957000000000');
+\x on
+select * from testing.more_magic order by _time;
+-[ RECORD 1 ]---------------------
+_time   | Tue Nov 26 07:39:14 2019
+level   | 0
+free    | 527806464
+_tags   | {"path": 0}
+_fields | {"total": 0}
+-[ RECORD 2 ]---------------------
+_time   | Tue Nov 26 07:39:15 2019
+level   | 1
+free    | 527806464
+_tags   | {}
+_fields | {"total": 0}
+-[ RECORD 3 ]---------------------
+_time   | Tue Nov 26 07:39:16 2019
+level   | 2
+free    | 12345
+_tags   | {"path": 0}
+_fields | {}
+-[ RECORD 4 ]---------------------
+_time   | Tue Nov 26 07:39:17 2019
+level   | 3
+free    | 12345
+_tags   | {}
+_fields | {}
+
+\x off
 drop schema testing cascade;
-NOTICE:  drop cascades to 3 other objects
+NOTICE:  drop cascades to 4 other objects
 DETAIL:  drop cascades to table testing.disk
 drop cascades to table testing.magic
 drop cascades to table testing.all_types
+drop cascades to table testing.more_magic
 drop extension influxdb;
