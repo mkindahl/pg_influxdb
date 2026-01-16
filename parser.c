@@ -226,30 +226,6 @@ StringInfo InfluxTokenGetString(InfluxToken* token) {
   }
 }
 
-JsonbValue* InfluxJsonbAddPairs(JsonbParseState** state, List* items) {
-  JsonbValue jb_key, jb_val;
-  ListCell* cell;
-
-  (void)pushJsonbValue(state, WJB_BEGIN_OBJECT, NULL);
-
-  foreach (cell, items) {
-    InfluxPair* pair = (InfluxPair*)lfirst(cell);
-    StringInfo key = InfluxTokenGetString(&pair->key);
-
-    jb_key.type = jbvString;
-    jb_key.val.string.val = key->data;
-    jb_key.val.string.len = key->len;
-
-    pushJsonbValue(state, WJB_KEY, &jb_key);
-
-    jb_val = InfluxTokenGetJsonbValue(&pair->val);
-
-    pushJsonbValue(state, WJB_VALUE, &jb_val);
-  }
-
-  return pushJsonbValue(state, WJB_END_OBJECT, NULL);
-}
-
 JsonbValue InfluxTokenGetJsonbValue(InfluxToken* token) {
   JsonbValue jb_val;
   Datum datum;
@@ -289,7 +265,7 @@ JsonbValue InfluxTokenGetJsonbValue(InfluxToken* token) {
   return jb_val;
 }
 
-Jsonb* DataPointGetJsonB(InfluxDataPoint* data_point) {
+Jsonb* InfluxDataPointGetJsonB(InfluxDataPoint* data_point) {
   JsonbValue jb_key, jb_val;
   JsonbValue* res;
   JsonbParseState* state = NULL;
@@ -371,7 +347,7 @@ Datum parse_text(PG_FUNCTION_ARGS) {
     InfluxDataPoint data_point;
 
     InfluxParseDataPoint(state, &data_point);
-    res = DataPointGetJsonB(&data_point);
+    res = InfluxDataPointGetJsonB(&data_point);
     SRF_RETURN_NEXT(funcctx, PointerGetDatum(res));
   }
 

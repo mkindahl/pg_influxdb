@@ -90,7 +90,7 @@ extern const char* KindName(int kind);
 extern StringInfo InfluxTokenGetString(InfluxToken* token);
 extern JsonbValue InfluxTokenGetJsonbValue(InfluxToken* token);
 extern JsonbValue* InfluxJsonbAddPairs(JsonbParseState** state, List* items);
-extern Jsonb* DataPointGetJsonB(InfluxDataPoint* data_point);
+extern Jsonb* InfluxDataPointGetJsonB(InfluxDataPoint* data_point);
 extern void InfluxParseDataPoint(InfluxParseState* state,
                                  InfluxDataPoint* data_point);
 
