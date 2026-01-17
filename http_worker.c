@@ -56,14 +56,14 @@
 
 #define BUFFER_SIZE (8 * 1024)
 
-enum Operation {
+typedef enum InfluxHttpRequestType {
   OPERATION_UNDEF,
   OPERATION_WRITE,
-};
+} InfluxHttpRequestType;
 
-struct ParsingData {
-  enum Operation oper;
-};
+typedef struct InfluxHttpRequestData {
+  InfluxHttpRequestType type;
+} InfluxHttpRequestData;
 
 static void HttpWorkerInsertMeasurements(const char* buf, size_t buflen) {
   int err;
@@ -95,8 +95,8 @@ static void HttpWorkerInsertMeasurements(const char* buf, size_t buflen) {
 static int on_url(http_parser* parser, const char* at, size_t length) {
   const char write[] = "/write";
   if (strncmp(at, write, sizeof(write) - 1) == 0) {
-    struct ParsingData* data = parser->data;
-    data->oper = OPERATION_WRITE;
+    InfluxHttpRequestData* data = parser->data;
+    data->type = OPERATION_WRITE;
     return 0; /*  All OK */
   } else {
     return 1; /* Error */
@@ -104,8 +104,8 @@ static int on_url(http_parser* parser, const char* at, size_t length) {
 }
 
 static int on_body(http_parser* parser, const char* buf, size_t len) {
-  struct ParsingData* data = parser->data;
-  switch (data->oper) {
+  InfluxHttpRequestData* data = parser->data;
+  switch (data->type) {
     case OPERATION_WRITE:
       HttpWorkerInsertMeasurements(buf, len);
       return 0;
@@ -248,7 +248,7 @@ HttpConnectionEntry* InfluxHttpWorkerAddConnection(InfluxHttpWorkerState* state,
   entry->settings.on_url = on_url;
   entry->settings.on_body = on_body;
   http_parser_init(&entry->parser, HTTP_REQUEST);
-  entry->parser.data = palloc0(sizeof(struct ParsingData));
+  entry->parser.data = palloc0(sizeof(InfluxHttpRequestData));
   return entry;
 }
 
