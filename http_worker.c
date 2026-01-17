@@ -114,12 +114,24 @@ static int on_body(http_parser* parser, const char* buf, size_t len) {
   }
 }
 
-void InfluxHttpWorkerSendResponse(InfluxHttpWorkerState* state, int client_fd,
-                                  int status_code, const char* reason,
-                                  const char* content_type, const char* body) {
+/*
+ * Function: InfluxHttpWorkerSendResponse
+ *
+ * We always close the connection so the connection close header field
+ * should be added when calling this function and the connection
+ * shutdown.
+ *
+ * If we want to support keep-alive connections, we need to handle
+ * that by remembering the value in the request header and using it
+ * here.
+ */
+void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state,
+                                  int client_fd, int status_code,
+                                  const char* reason,
+                                  const InfluxHttpHeaderData field[],
+                                  size_t nfields, const char* body) {
   ssize_t sent;
   StringInfoData response;
-  size_t body_length = body ? strlen(body) : 0;
   time_t now = time(NULL);
   char buf[128];
 
@@ -128,14 +140,30 @@ void InfluxHttpWorkerSendResponse(InfluxHttpWorkerState* state, int client_fd,
   initStringInfo(&response);
   appendStringInfo(&response, "HTTP/1.1 %d %s\r\n", status_code, reason);
 
-  appendStringInfo(&response, "Content-Type: %s\r\n", content_type);
+  if (field) {
+    Assert(nfields > 0);
+    for (size_t i = 0; i < nfields; ++i) {
+      appendStringInfo(&response, "%s: %s\r\n", field[i].name, field[i].value);
+    }
+  }
 
+  /*
+   * Add current date to the response.
+   *
+   * TODO: Switch to the recommended format rather than one of the
+   * obsolete (but supported) formats.
+   *
+   * Function asctime() adds a newline last, so we remove the
+   * terminating newline and add a proper CRLF below.
+   */
   asctime_r(localtime(&now), buf);
-  buf[strlen(buf) - 1] = '0'; /* Truncate terminating newline */
+  buf[strlen(buf) - 1] = '0';
   appendStringInfo(&response, "Date: %s\r\n", buf);
 
-  if (body_length > 0)
+  if (body) {
+    size_t body_length = strlen(body);
     appendStringInfo(&response, "Content-Length: %lu\r\n", body_length);
+  }
 
   appendStringInfoString(&response, "\r\n");
 
@@ -323,11 +351,16 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int client_fd) {
       /* If all data is processed, we just send a response and return */
       if (len == 0 ||
           (len == -1 && (errno == EAGAIN || errno == EWOULDBLOCK))) {
+        InfluxHttpHeaderData fields[] = {
+            {"Connection", "close"},
+        };
+
         InfluxHttpWorkerSendResponse(state,
                                      client_fd,
                                      204,
                                      "No Content",
-                                     "application/octet-stream",
+                                     fields,
+                                     sizeof(fields) / sizeof(*fields),
                                      NULL);
         InfluxHttpWorkerDelConnection(state, client_fd);
         return;
@@ -362,6 +395,10 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int client_fd) {
     StringInfo edata_text = makeStringInfo();
     ErrorData* edata;
     Jsonb* edata_jb;
+    const InfluxHttpHeaderData fields[] = {
+        {"Content-Type", "application/json"},
+        {"Connection", "close"},
+    };
 
     MemoryContextSwitchTo(oldcontext);
 
@@ -385,7 +422,8 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int client_fd) {
                                  client_fd,
                                  400,
                                  "Bad Request",
-                                 "application/json",
+                                 fields,
+                                 sizeof(fields) / sizeof(*fields),
                                  edata_text->data);
     InfluxHttpWorkerDelConnection(state, client_fd);
     destroyStringInfo(edata_text);
