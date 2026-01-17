@@ -49,6 +49,16 @@ typedef struct InfluxHttpWorkerState {
   HTAB* http_connection_hash;
 } InfluxHttpWorkerState;
 
+/*
+ * Struct: InfluxHttpHeaderData
+ *
+ * Headers for a HTTP request or response.
+ */
+typedef struct InfluxHttpHeaderData {
+  const char name[64];
+  const char value[256 - 64];
+} InfluxHttpHeaderData;
+
 extern PGDLLEXPORT void InfluxHttpWorkerMain(Datum arg);
 
 extern void InfluxHttpWorkerInit(BackgroundWorker* worker);
@@ -60,9 +70,9 @@ extern HttpConnectionEntry* InfluxHttpWorkerAddConnection(
     InfluxHttpWorkerState* state, int fd);
 extern HttpConnectionEntry* InfluxHttpWorkerDelConnection(
     InfluxHttpWorkerState* state, int fd);
-extern void InfluxHttpWorkerSendResponse(InfluxHttpWorkerState* state,
+extern void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state,
                                          int client_fd, int status_code,
                                          const char* reason,
-                                         const char* content_type,
-                                         const char* body);
+                                         const InfluxHttpHeaderData field[],
+                                         size_t nfields, const char* body);
 #endif /* HTTP_WORKER_H_ */
