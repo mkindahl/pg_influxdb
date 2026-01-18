@@ -24,13 +24,11 @@ DATA_built = influxdb--$(VERSION_influxdb).sql
 PGFILEDESC = "influxdb - InfluxDB web interface to PostgreSQL"
 
 REGRESS = tokenizer parser process create
+TAP_TESTS = 1
 
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
-
-prove:
-	$(prove_installcheck)
 
 influxdb--$(VERSION_influxdb).sql: influxdb.sql
 	cp $< $@
