@@ -29,6 +29,9 @@ PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 
+prove:
+	$(prove_installcheck)
+
 influxdb--$(VERSION_influxdb).sql: influxdb.sql
 	cp $< $@
 
