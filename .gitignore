@@ -52,6 +52,7 @@ results/
 tmp_check/
 *.tdy
 *.bak
+*.ERR
 
 # Generated files
 tokenizer_lex.c
