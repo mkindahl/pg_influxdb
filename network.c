@@ -28,23 +28,23 @@
 
 #include <memory.h>
 
-static void log_addrstr(const char *func, struct sockaddr *addr,
-                        socklen_t addrlen) {
-  if (addrlen > 0) {
-    char host[NI_MAXHOST], service[NI_MAXSERV];
-    if (getnameinfo(addr,
-                    addrlen,
-                    host,
-                    sizeof(host),
-                    service,
-                    sizeof(service),
-                    NI_NUMERICSERV) == 0)
-      elog(LOG, "%s: testing address %s:%s", func, host, service);
-  }
-}
+#define LOG_ADDRSTR(ADDR, ADDRLEN)                                          \
+  do {                                                                      \
+    char host[NI_MAXHOST], service[NI_MAXSERV];                             \
+    if ((ADDRLEN) > 0) {                                                    \
+      if (getnameinfo((ADDR),                                               \
+                      (ADDRLEN),                                            \
+                      host,                                                 \
+                      sizeof(host),                                         \
+                      service,                                              \
+                      sizeof(service),                                      \
+                      NI_NUMERICSERV) == 0)                                 \
+        elog(DEBUG1, "%s: testing address %s:%s", __func__, host, service); \
+    }                                                                       \
+  } while (0)
 
 int network_listener_create(const char *service, struct sockaddr *addr_out,
-                            socklen_t addrlen) {
+                            socklen_t *addrlen) {
   int yes = 1;
   int err;
   int fd = -1;
@@ -71,7 +71,7 @@ int network_listener_create(const char *service, struct sockaddr *addr_out,
 
     setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(int));
 
-    log_addrstr(__func__, addr->ai_addr, addr->ai_addrlen);
+    LOG_ADDRSTR(addr->ai_addr, addr->ai_addrlen);
 
     if (bind(fd, addr->ai_addr, addr->ai_addrlen) == 0)
       break;

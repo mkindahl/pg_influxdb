@@ -47,7 +47,11 @@
 *.dwo
 
 # Tools files and directories
+log/
 results/
+tmp_check/
+*.tdy
+*.bak
 
 # Generated files
 tokenizer_lex.c
