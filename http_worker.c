@@ -172,6 +172,8 @@ void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state,
     appendStringInfoString(&response, "\r\n");
   }
 
+  elog(DEBUG1, "sending response:\n%s", response.data);
+
   sent = write(client_fd, response.data, response.len);
   if (sent != response.len)
     ereport(LOG,
@@ -392,7 +394,7 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int client_fd) {
   }
   PG_CATCH();
   {
-    StringInfo edata_text = makeStringInfo();
+    StringInfo edata_text;
     ErrorData* edata;
     Jsonb* edata_jb;
     const InfluxHttpHeaderData fields[] = {
@@ -401,6 +403,7 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int client_fd) {
     };
 
     MemoryContextSwitchTo(oldcontext);
+    edata_text = makeStringInfo();
 
     HOLD_INTERRUPTS();
 
@@ -410,6 +413,8 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int client_fd) {
     FlushErrorState();
 
     RESUME_INTERRUPTS();
+
+    elog(DEBUG1, "edata: level=%d, message=%s", edata->elevel, edata->message);
 
     MemoryContextSwitchTo(oldcontext);
     CurrentResourceOwner = oldowner;
