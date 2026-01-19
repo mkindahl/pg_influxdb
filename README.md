@@ -59,8 +59,8 @@ since the epoch.
 
 ## Differences from InfluxDB Line Protocol
 
-Compared to the [Influx Line Protocol Reference][2] there are some
-subtle differences in semantics, which are outlined here.
+Compared to the [Influx Line Protocol Reference][line-protocol] there
+are some subtle differences in semantics, which are outlined here.
 
 ### Quotes and backslashes
 
@@ -105,11 +105,13 @@ boolean, but with `pg_influxdb` we consider values `T`, `TRUE`, `F`,
 and `FALSE` in all combinations of case as boolean. This means that
 also `tRue` is a boolean (if not quoted).
 
-[1]: https://github.com/timescale/pg_influx
-[2]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol
-[quotes]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/#quotes
-[boolean]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/#boolean
-[duplicate]: https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/#duplicate-points
+### Line endings
+
+According to the [Influx Line Protocol Reference][line-protocol] a
+timestamp can be missing, but if there is a blank at the end of the
+line, this would generate a syntax error. This is very difficult to
+spot so instead we allow blanks at the end of the line even when there
+is no timestamp.
 
 ## HTTP Endpoint
 
@@ -173,6 +175,12 @@ testing:
 `PROCEDURE process_text(regnamespace, text)`
 : Procedure for processing a set of InfluxDB protocol lines and insert
 : them into the correct table.
+
+[1]: https://github.com/timescale/pg_influx
+[line-protocol]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol
+[quotes]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/#quotes
+[boolean]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/#boolean
+[duplicate]: https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/#duplicate-points
 
 ## Copyrights
 

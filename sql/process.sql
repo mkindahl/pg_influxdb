@@ -69,7 +69,7 @@ CALL influxdb.process_text('testing', E'more_magic,level=3 free=12345i 157475395
 
 select * from testing.more_magic order by _time;
 
-CALL influxdb.process_text('testing', E'more_magic,level=4,path=1i free=23456i,total=4711i');
+CALL influxdb.process_text('testing', E'more_magic,level=4,path=1i free=23456i,total=4711i\n');
 
 -- Skip the timestamp since the server time is used. We just check
 -- that it does not crash.

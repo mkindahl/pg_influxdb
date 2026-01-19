@@ -110,25 +110,29 @@ is( $json->{'error'}, q/no relation "cpu" found in namespace "metrics"/ );
 # result.
 $output = curl "http://localhost:$port/write", <<'END_OF_LINES';
 disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574753954000000000
-disk,mode=rw,path=/boot/efi free=527807775i,total=1000i,used_percent=1.12 1574753964000000000
+disk,mode=rw,path=/boot/efi free=527807775i,total=1000i,used_percent=1.12
 disk,mode=rw,path=/boot/efi free=527808830i,total=2000i,used_percent=1.11 1574753974000000000
-disk,mode=rw,path=/boot/efi free=527809294i,total=3000i,used_percent=20.3 1574753984000000000
+disk,mode=rw,path=/boot/efi free=527809294i,total=3000i,used_percent=20.3
 disk,mode=rw,path=/boot/efi free=527806464i,total=4000i,used_percent=1.49 1574753994000000000
 END_OF_LINES
+
+is( $node->safe_psql( "postgres", "select count(*) from $schema.disk" ), 5 );
 
 $response = HTTP::Response->parse($output);
 is_response( $response, 204, 'No Content' );
 has_headers( $response, 'Date' );
 
 $result = $node->safe_psql( "postgres", <<"END_OF_SQL" );
-select * from $schema.disk order by _time;
+select *
+  from $schema.disk
+ where _time between '2019-11-26 00:00:00'
+                 and '2019-11-27 00:00:00'
+order by _time;
 END_OF_SQL
 
 $expected = trim(<<'END_OF_TEXT');
 2019-11-26 08:39:14+01|rw|527806464|{"path": "/boot/efi"}|{"total": 0, "used_percent": 1.49}
-2019-11-26 08:39:24+01|rw|527807775|{"path": "/boot/efi"}|{"total": 1000, "used_percent": 1.12}
 2019-11-26 08:39:34+01|rw|527808830|{"path": "/boot/efi"}|{"total": 2000, "used_percent": 1.11}
-2019-11-26 08:39:44+01|rw|527809294|{"path": "/boot/efi"}|{"total": 3000, "used_percent": 20.3}
 2019-11-26 08:39:54+01|rw|527806464|{"path": "/boot/efi"}|{"total": 4000, "used_percent": 1.49}
 END_OF_TEXT
 
@@ -147,7 +151,11 @@ is_response( $response, 204, 'No Content' );
 has_headers( $response, 'Date' );
 
 $result = $node->safe_psql( "postgres", <<"END_OF_SQL" );
-select * from $schema.disk where _time > '2019-11-27 00:00:00' order by _time;
+select *
+  from $schema.disk
+ where _time between '2019-11-27 00:00:00'
+                 and '2019-11-28 00:00:00'
+order by _time;
 END_OF_SQL
 
 $expected = trim(<<'END_OF_TEXT');

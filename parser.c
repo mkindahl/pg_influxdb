@@ -144,7 +144,8 @@ static InfluxToken ParseFields(InfluxParseState* state,
 
     next = InfluxNextToken(state);
 
-    if (next.kind == TOKEN_KIND_BLANK || next.kind == TOKEN_KIND_END_OF_INPUT)
+    if (next.kind == TOKEN_KIND_BLANK || next.kind == TOKEN_KIND_END_OF_INPUT ||
+        next.kind == TOKEN_KIND_END_OF_LINE)
       break;
 
     if (next.kind != ',')
@@ -182,11 +183,22 @@ void InfluxParseDataPoint(InfluxParseState* state,
   token = ParseFields(state, data_point);
   if (token.kind == TOKEN_KIND_BLANK) {
     token = InfluxNextToken(state);
-    if (token.kind != TOKEN_KIND_NUMBER)
-      SYNTAX_ERROR("timestamp", &token);
-    data_point->timestamp = token;
+    if (token.kind != TOKEN_KIND_NUMBER &&
+        token.kind != TOKEN_KIND_END_OF_INPUT &&
+        token.kind != TOKEN_KIND_END_OF_LINE)
+      SYNTAX_ERROR("timestamp, end of line, or end of input", &token);
+
+    /* If we have a number, we read it as a timestamp */
+    if (token.kind == TOKEN_KIND_NUMBER) {
+      data_point->timestamp = token;
+
+      /* We skip blanks at the end of a line, just because it does not
+       * seem to make sense to generate error on that. */
+      while ((token = InfluxNextToken(state)).kind == TOKEN_KIND_BLANK)
+        continue;
+    }
   }
-  token = InfluxNextToken(state);
+
   if (token.kind != TOKEN_KIND_END_OF_INPUT &&
       token.kind != TOKEN_KIND_END_OF_LINE)
     SYNTAX_ERROR("end of line or end of input", &token);
