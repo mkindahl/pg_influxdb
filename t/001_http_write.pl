@@ -97,7 +97,7 @@ is( $json->{'error'}, "syntax error" );
 # Check that when trying to insert into a measurement that does not
 # exist generates an error.
 $output = curl "http://localhost:$port/write", <<'END_OF_LINES';
-cpu usage=12 1574753954000000000
+cpu usage=1.22 1574753954000000000
 END_OF_LINES
 
 $response = HTTP::Response->parse($output);
@@ -120,7 +120,7 @@ is( $node->safe_psql( "postgres", "select count(*) from $schema.disk" ), 5 );
 
 $response = HTTP::Response->parse($output);
 is_response( $response, 204, 'No Content' );
-has_headers( $response, 'Date' );
+has_headers( $response, 'Date', 'Connection' );
 
 $result = $node->safe_psql( "postgres", <<"END_OF_SQL" );
 select *
@@ -164,5 +164,7 @@ $expected = trim(<<'END_OF_TEXT');
 END_OF_TEXT
 
 is( $result, $expected );
+
+$node->stop;
 
 done_testing();
