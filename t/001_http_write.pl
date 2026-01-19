@@ -6,7 +6,7 @@ use Test::More;
 use IPC::Run;
 use HTTP::Response;
 use List::Util qw(all);
-use JSON qw(decode_json);
+use JSON       qw(decode_json);
 use Data::Dumper;
 
 sub trim { my $s = shift; $s =~ s/^\s+|\s+$//g; return $s; }
@@ -37,7 +37,7 @@ sub has_headers {
     ok( all { $response->header($_) } @headers );
 }
 
-my ($output, $response, $json);
+my ( $output, $response, $json, $expected, $result );
 
 my $node = PostgreSQL::Test::Cluster->new('main');
 my $port = PostgreSQL::Test::Cluster::get_free_port();
@@ -72,7 +72,15 @@ disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 157475
 END_OF_LINES
 
 $response = HTTP::Response->parse($output);
-is_response( $response, 400, 'Bad Request' );
+is_response( $response, 404, 'Not Found' );
+has_headers( $response, 'Date', 'Connection' );
+
+$output = curl "http://localhost:$port/writer", <<'END_OF_LINES';
+disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574753954000000000
+END_OF_LINES
+
+$response = HTTP::Response->parse($output);
+is_response( $response, 404, 'Not Found' );
 has_headers( $response, 'Date', 'Connection' );
 
 # Check that we get a proper response on a syntax error
@@ -84,10 +92,10 @@ $response = HTTP::Response->parse($output);
 is_response( $response, 400, 'Bad Request' );
 has_headers( $response, 'Date', 'Connection' );
 $json = decode_json $response->content;
-is($json->{'error'}, "syntax error");
+is( $json->{'error'}, "syntax error" );
 
-# Check that when trying to insert into a metric that does not exist,
-# it generates an error.
+# Check that when trying to insert into a measurement that does not
+# exist generates an error.
 $output = curl "http://localhost:$port/write", <<'END_OF_LINES';
 cpu usage=12 1574753954000000000
 END_OF_LINES
@@ -96,8 +104,10 @@ $response = HTTP::Response->parse($output);
 is_response( $response, 400, 'Bad Request' );
 has_headers( $response, 'Date', 'Connection' );
 $json = decode_json $response->content;
-is($json->{'error'}, q/no relation "cpu" found in namespace "metrics"/);
+is( $json->{'error'}, q/no relation "cpu" found in namespace "metrics"/ );
 
+# Check that we can write data through the endpoint and get the right
+# result.
 $output = curl "http://localhost:$port/write", <<'END_OF_LINES';
 disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574753954000000000
 disk,mode=rw,path=/boot/efi free=527807775i,total=1000i,used_percent=1.12 1574753964000000000
@@ -110,16 +120,39 @@ $response = HTTP::Response->parse($output);
 is_response( $response, 204, 'No Content' );
 has_headers( $response, 'Date' );
 
-my $result = $node->safe_psql( "postgres", <<"END_OF_SQL" );
+$result = $node->safe_psql( "postgres", <<"END_OF_SQL" );
 select * from $schema.disk order by _time;
 END_OF_SQL
 
-my $expected = trim(<<'END_OF_TEXT');
+$expected = trim(<<'END_OF_TEXT');
 2019-11-26 08:39:14+01|rw|527806464|{"path": "/boot/efi"}|{"total": 0, "used_percent": 1.49}
 2019-11-26 08:39:24+01|rw|527807775|{"path": "/boot/efi"}|{"total": 1000, "used_percent": 1.12}
 2019-11-26 08:39:34+01|rw|527808830|{"path": "/boot/efi"}|{"total": 2000, "used_percent": 1.11}
 2019-11-26 08:39:44+01|rw|527809294|{"path": "/boot/efi"}|{"total": 3000, "used_percent": 20.3}
 2019-11-26 08:39:54+01|rw|527806464|{"path": "/boot/efi"}|{"total": 4000, "used_percent": 1.49}
+END_OF_TEXT
+
+is( $result, $expected );
+
+# Check that write endpoint is handled correctly even when we have
+# parameters in the URL. Databases are not used yet, but it should
+# work anyway.
+$output = curl "http://localhost:$port/write?db=mydb", <<'END_OF_LINES';
+disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574853954000000000
+disk,mode=rw,path=/boot/efi free=527807775i,total=1000i,used_percent=1.12 1574853964000000000
+END_OF_LINES
+
+$response = HTTP::Response->parse($output);
+is_response( $response, 204, 'No Content' );
+has_headers( $response, 'Date' );
+
+$result = $node->safe_psql( "postgres", <<"END_OF_SQL" );
+select * from $schema.disk where _time > '2019-11-27 00:00:00' order by _time;
+END_OF_SQL
+
+$expected = trim(<<'END_OF_TEXT');
+2019-11-27 12:25:54+01|rw|527806464|{"path": "/boot/efi"}|{"total": 0, "used_percent": 1.49}
+2019-11-27 12:26:04+01|rw|527807775|{"path": "/boot/efi"}|{"total": 1000, "used_percent": 1.12}
 END_OF_TEXT
 
 is( $result, $expected );

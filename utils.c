@@ -51,21 +51,21 @@ JsonbValue* InfluxJsonbAddPairs(JsonbParseState** state, List* items) {
   return pushJsonbValue(state, WJB_END_OBJECT, NULL);
 }
 
-static void InfluxJsonbAddKeyValue(JsonbParseState** state, char* key,
-                                   char* value) {
+void InfluxJsonbAddKeyValue(JsonbParseState** state, const char* key,
+                            const char* val) {
   JsonbValue jb_key, jb_val;
 
-  elog(DEBUG1, "adding %s message %s", key, value);
+  elog(DEBUG1, "adding %s message %s", key, val);
 
   jb_key.type = jbvString;
-  jb_key.val.string.val = key;
+  jb_key.val.string.val = (char*)key;
   jb_key.val.string.len = strlen(key);
 
   pushJsonbValue(state, WJB_KEY, &jb_key);
 
   jb_val.type = jbvString;
-  jb_val.val.string.val = value;
-  jb_val.val.string.len = strlen(value);
+  jb_val.val.string.val = (char*)val;
+  jb_val.val.string.len = strlen(val);
 
   (void)pushJsonbValue(state, WJB_VALUE, &jb_val);
 }

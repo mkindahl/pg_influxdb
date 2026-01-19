@@ -24,6 +24,7 @@
 #include <c.h>
 #include <postmaster/bgworker.h>
 #include <utils/hsearch.h>
+#include <utils/jsonb.h>
 
 #include "http_parser.h"
 
@@ -72,7 +73,10 @@ extern HttpConnectionEntry* InfluxHttpWorkerDelConnection(
     InfluxHttpWorkerState* state, int fd);
 extern void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state,
                                          int client_fd, int status_code,
-                                         const char* reason,
                                          const InfluxHttpHeaderData field[],
-                                         size_t nfields, const char* body);
+                                         size_t nfields, const char* content);
+extern void InfluxHttpWorkerSendErrorResponse(InfluxHttpWorkerState* state,
+                                              int client_fd, int status_code,
+                                              Jsonb* content);
+
 #endif /* HTTP_WORKER_H_ */
