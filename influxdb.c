@@ -106,16 +106,17 @@ void _PG_init(void) {
       NULL,
       NULL);
 
-  DefineCustomBoolVariable("influxdb.auto_create_table",
-                           "Automatically create a table if metric is missing.",
-                           NULL,
-                           &influxdb_auto_create_table,
-                           false,
-                           PGC_USERSET,
-                           0,
-                           NULL,
-                           NULL,
-                           NULL);
+  DefineCustomBoolVariable(
+      "influxdb.auto_create_table",
+      "Automatically create tables for measurements.",
+      "Automatically create missing tables for measurements.",
+      &influxdb_auto_create_table,
+      false,
+      PGC_USERSET,
+      0,
+      NULL,
+      NULL,
+      NULL);
 
   DefineCustomIntVariable("influxdb.http_workers",   /* option name */
                           "Number of HTTP workers.", /* short descriptor */
