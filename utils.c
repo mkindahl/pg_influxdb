@@ -51,25 +51,34 @@ JsonbValue* InfluxJsonbAddPairs(JsonbParseState** state, List* items) {
   return pushJsonbValue(state, WJB_END_OBJECT, NULL);
 }
 
+static void InfluxJsonbAddKeyValue(JsonbParseState** state, char* key,
+                                   char* value) {
+  JsonbValue jb_key, jb_val;
+
+  elog(DEBUG1, "adding %s message %s", key, value);
+
+  jb_key.type = jbvString;
+  jb_key.val.string.val = key;
+  jb_key.val.string.len = strlen(key);
+
+  pushJsonbValue(state, WJB_KEY, &jb_key);
+
+  jb_val.type = jbvString;
+  jb_val.val.string.val = value;
+  jb_val.val.string.len = strlen(value);
+
+  (void)pushJsonbValue(state, WJB_VALUE, &jb_val);
+}
+
 Jsonb* InfluxErrorDataGetJsonb(ErrorData* edata) {
   JsonbParseState* state = NULL;
-  JsonbValue jb_key, jb_val;
   JsonbValue* result;
 
   (void)pushJsonbValue(&state, WJB_BEGIN_OBJECT, NULL);
 
-  /* Add error message */
-  jb_key.type = jbvString;
-  jb_key.val.string.val = "error";
-  jb_key.val.string.len = sizeof("error") - 1;
-
-  pushJsonbValue(&state, WJB_KEY, &jb_key);
-
-  jb_val.type = jbvString;
-  jb_val.val.string.val = edata->message;
-  jb_val.val.string.len = strlen(edata->message);
-
-  (void)pushJsonbValue(&state, WJB_VALUE, &jb_val);
+  InfluxJsonbAddKeyValue(&state, "error", edata->message);
+  if (edata->detail)
+    InfluxJsonbAddKeyValue(&state, "detail", edata->detail);
 
   result = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
 
