@@ -26,6 +26,8 @@
 
 extern Jsonb* InfluxBuildJsonObject(List* items);
 extern JsonbValue* InfluxJsonbAddPairs(JsonbParseState** state, List* items);
+extern void InfluxJsonbAddKeyValue(JsonbParseState** state, const char* key,
+                                   const char* value);
 extern Jsonb* InfluxErrorDataGetJsonb(ErrorData* edata);
 
 #endif /* UTILS_H_ */

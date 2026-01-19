@@ -94,13 +94,19 @@ static void HttpWorkerInsertMeasurements(const char* buf, size_t buflen) {
 
 static int on_url(http_parser* parser, const char* at, size_t length) {
   const char write[] = "/write";
-  if (strncmp(at, write, sizeof(write) - 1) == 0) {
+  size_t pathlen = strcspn(at, "? ");
+
+  elog(LOG, "%s: saw length %lu in %s", __func__, pathlen, at);
+
+  if (pathlen == sizeof(write) - 1 && strncmp(at, write, pathlen) == 0) {
     InfluxHttpRequestData* data = parser->data;
     data->type = OPERATION_WRITE;
     return 0; /*  All OK */
-  } else {
-    return 1; /* Error */
   }
+
+  parser->status_code = 404;
+
+  return 1; /* Error */
 }
 
 static int on_body(http_parser* parser, const char* buf, size_t len) {
@@ -111,6 +117,19 @@ static int on_body(http_parser* parser, const char* buf, size_t len) {
       return 0;
     default:
       return 1;
+  }
+}
+
+static const char* InfluxHttpStatusMessage(int status_code) {
+  switch (status_code) {
+    case 400:
+      return "Bad Request";
+    case 404:
+      return "Not Found";
+    case 204:
+      return "No Content";
+    default:
+      return "Unknown Status";
   }
 }
 
@@ -127,7 +146,6 @@ static int on_body(http_parser* parser, const char* buf, size_t len) {
  */
 void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state,
                                   int client_fd, int status_code,
-                                  const char* reason,
                                   const InfluxHttpHeaderData field[],
                                   size_t nfields, const char* body) {
   ssize_t sent;
@@ -138,7 +156,10 @@ void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state,
   Assert(content_type != NULL);
 
   initStringInfo(&response);
-  appendStringInfo(&response, "HTTP/1.1 %d %s\r\n", status_code, reason);
+  appendStringInfo(&response,
+                   "HTTP/1.1 %d %s\r\n",
+                   status_code,
+                   InfluxHttpStatusMessage(status_code));
 
   if (field) {
     Assert(nfields > 0);
@@ -183,6 +204,33 @@ void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state,
                    response.len));
 
   resetStringInfo(&response);
+}
+
+void InfluxHttpWorkerSendErrorResponse(InfluxHttpWorkerState* state, int fd,
+                                       int status_code, Jsonb* content) {
+  const InfluxHttpHeaderData fields[] = {
+      {"Content-Type", "application/json"},
+      {"Connection", "close"},
+  };
+  size_t nfields = sizeof(fields) / sizeof(*fields);
+  StringInfoData text_content = {NULL};
+
+  /*
+   * Maybe we can use a scratch memory context for each request
+   * instead and make cleanup easy.
+   */
+  if (content) {
+    initStringInfo(&text_content);
+    (void)JsonbToCString(&text_content, &content->root, VARSIZE(content));
+  }
+
+  InfluxHttpWorkerSendResponse(
+      state, fd, status_code, fields, nfields, text_content.data);
+
+  if (text_content.data)
+    pfree(text_content.data);
+
+  InfluxHttpWorkerDelConnection(state, fd);
 }
 
 HttpConnectionEntry* InfluxHttpWorkerDelConnection(InfluxHttpWorkerState* state,
@@ -360,7 +408,6 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int client_fd) {
         InfluxHttpWorkerSendResponse(state,
                                      client_fd,
                                      204,
-                                     "No Content",
                                      fields,
                                      sizeof(fields) / sizeof(*fields),
                                      NULL);
@@ -382,28 +429,56 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int client_fd) {
       parsed =
           http_parser_execute(&entry->parser, &entry->settings, buffer, len);
 
-      elog(DEBUG1, "parsed %ld bytes of %ld", parsed, len);
+      elog(DEBUG1,
+           "parsed %ld bytes of %ld, status_code: %d",
+           parsed,
+           len,
+           entry->parser.status_code);
 
-      if (parsed != len)
-        elog(ERROR,
-             "HTTP error %s when parsing data from %d: %s",
-             http_errno_name(HTTP_PARSER_ERRNO(&entry->parser)),
-             entry->read_fd,
-             http_errno_description(HTTP_PARSER_ERRNO(&entry->parser)));
+      if (entry->parser.status_code > 0) {
+        JsonbParseState* jbstate = NULL;
+        JsonbValue* result;
+
+        (void)pushJsonbValue(&jbstate, WJB_BEGIN_OBJECT, NULL);
+
+        InfluxJsonbAddKeyValue(&jbstate, "error", "endpoint does not exist");
+
+        result = pushJsonbValue(&jbstate, WJB_END_OBJECT, NULL);
+
+        InfluxHttpWorkerSendErrorResponse(state,
+                                          client_fd,
+                                          entry->parser.status_code,
+                                          JsonbValueToJsonb(result));
+        break;
+      } else if (parsed != len) {
+        JsonbParseState* jbstate = NULL;
+        JsonbValue* result;
+
+        (void)pushJsonbValue(&jbstate, WJB_BEGIN_OBJECT, NULL);
+
+        InfluxJsonbAddKeyValue(
+            &jbstate,
+            "error",
+            http_errno_name(HTTP_PARSER_ERRNO(&entry->parser)));
+        InfluxJsonbAddKeyValue(
+            &jbstate,
+            "detail",
+            http_errno_description(HTTP_PARSER_ERRNO(&entry->parser)));
+
+        result = pushJsonbValue(&jbstate, WJB_END_OBJECT, NULL);
+
+        InfluxHttpWorkerSendErrorResponse(
+            state, client_fd, 400, JsonbValueToJsonb(result));
+        break;
+      }
     }
   }
   PG_CATCH();
   {
-    StringInfo edata_text;
     ErrorData* edata;
     Jsonb* edata_jb;
-    const InfluxHttpHeaderData fields[] = {
-        {"Content-Type", "application/json"},
-        {"Connection", "close"},
-    };
 
     MemoryContextSwitchTo(oldcontext);
-    edata_text = makeStringInfo();
 
     HOLD_INTERRUPTS();
 
@@ -420,18 +495,7 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int client_fd) {
     CurrentResourceOwner = oldowner;
 
     edata_jb = InfluxErrorDataGetJsonb(edata);
-
-    (void)JsonbToCString(edata_text, &edata_jb->root, VARSIZE(edata_jb));
-
-    InfluxHttpWorkerSendResponse(state,
-                                 client_fd,
-                                 400,
-                                 "Bad Request",
-                                 fields,
-                                 sizeof(fields) / sizeof(*fields),
-                                 edata_text->data);
-    InfluxHttpWorkerDelConnection(state, client_fd);
-    destroyStringInfo(edata_text);
+    InfluxHttpWorkerSendErrorResponse(state, client_fd, 400, edata_jb);
   }
   PG_END_TRY();
 }
