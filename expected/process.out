@@ -134,7 +134,7 @@ select * from testing.more_magic order by _time;
  Tue Nov 26 07:39:17 2019 |     3 |     12345 | {}          | {}
 (4 rows)
 
-CALL influxdb.process_text('testing', E'more_magic,level=4,path=1i free=23456i,total=4711i');
+CALL influxdb.process_text('testing', E'more_magic,level=4,path=1i free=23456i,total=4711i\n');
 -- Skip the timestamp since the server time is used. We just check
 -- that it does not crash.
 select level, free, _tags, _fields from testing.more_magic order by level;

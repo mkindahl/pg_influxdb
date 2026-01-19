@@ -43,4 +43,18 @@ select * from influxdb.parse_text('myMeasurement,tagKey=üç≠ fieldKey="Launch ü
 select * from influxdb.parse_text('disk,mode=0,path=0i free=527806466i,total=10i 1574753955000000000
 disk,mode=0,path=0i free=527806499i,total=20i 1574753956000000000');
 
+-- Different variations of line endings for multi-line texts that has
+-- caused problems. We allow and ignore blanks and the end of the
+-- line, and also allow missing timestamps.
+select * from influxdb.parse_text(E'cpu,mode=0 load=1.2 1556814561098000000\ncpu,mode=1 load=1.5\n');
+select * from influxdb.parse_text(E'cpu,mode=1 load=1.2 1556814561098000000 \ncpu,mode=1 load=1.5\n');
+select * from influxdb.parse_text(E'cpu,mode=2 load=1.2  \ncpu,mode=1 load=1.5 1556814561098000000\n');
+select * from influxdb.parse_text(E'cpu,mode=3 load=1.2  \ncpu,mode=1 load=1.5 1556814561098000000 \n');
+select * from influxdb.parse_text(E'cpu,mode=4 load=1.2  \ncpu,mode=1 load=1.5 1556814561098000000 ');
+select * from influxdb.parse_text(E'cpu,mode=5 load=1.2  \ncpu,mode=1 load=1.5');
+select * from influxdb.parse_text(E'cpu,mode=6 load=1.2  \ncpu,mode=1 load=1.5\n');
+select * from influxdb.parse_text(E'cpu,mode=7 load=1.2\ncpu,mode=1 load=1.5\n');
+select * from influxdb.parse_text(E'cpu,mode=7 load=1.2\ncpu,mode=1 load=1.5');
+select * from influxdb.parse_text(E'cpu load=9.99\ncpu load=9.98');
+
 drop extension influxdb;
