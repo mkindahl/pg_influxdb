@@ -130,34 +130,35 @@ curl -i -XPOST 'http://localhost:8086/write \
 The following options are available:
 
 `influxdb.keep_quotes` (`boolean`)
-: Keep quotes for a string as part of the actual string. Quotes are normally
-: not part of the string, as outlined above, but if you want to keep
-: the quotes, then set this to `on`. Default is `off`. This option can
-: be set at any time and not only in the configuration file.
+: Keep quotes for a string as part of the actual string. Quotes are
+  normally not part of the string, as outlined above, but if you want
+  to keep the quotes, then set this to `on`. Default is `off`. This
+  option can be set at any time and not only in the configuration
+  file.
 
 `influxdb.auto_create_table` (`boolean`)
 : Auto-create a default table if no table exists for the measurement
-: that arrived. This allows users to first collect measurements and
-: then later decide what measurements are interesting and how the
-: table definitions should look. Default is `off`. This option can
-: be set at any time and not only in the configuration file.
+  that arrived. This allows users to first collect measurements and
+  then later decide what measurements are interesting and how the
+  table definitions should look. Default is `off`. This option can be
+  set at any time and not only in the configuration file.
 
 `influxdb.http_workers` (`integer`)
 : The number of HTTP workers to spawn when starting the
-: server. Default is to spawn 4 workers.
+  server. Default is to spawn 4 workers.
 
 `influxdb.http_service` (`string`)
 : Service name or port number to use for the HTTP service. If you use
-: a string here, it will be looked up using `getservbyname` so you can
-: use something like `http` if you want. Default is to use the same
-: port as InfluxDB, which is 8086.
+  a string here, it will be looked up using `getservbyname` so you can
+  use something like `http` if you want. Default is to use the same
+  port as InfluxDB, which is 8086.
 
 `influxdb.database_name` (`string`)
 : Name of the database that the HTTP workers shall connect to.
 
 `influxdb.schema_name` (`string`)
 : Name of the schema where all measurement tables are stored. Default
-: is `measurements`.
+  is `measurements`.
 
 ## Functions
 
@@ -166,15 +167,15 @@ testing:
 
 `FUNCTION influxdb.parse_text(text) RETURNS SETOF jsonb`
 : Parse an InfluxDB text block into multiple lines and return the
-: parsed result as JSONB. This is mostly intended to test the parser.
+  parsed result as JSONB. This is mostly intended to test the parser.
 
 `FUNCTION influxdb.tokenize(text) RETURNS TABLE(kind integer, value text)`
 : Process a text consisting of InfluxDB protocol lines and return the
-: tokens. Intended for testing the tokenizer.
+  tokens. Intended for testing the tokenizer.
 
 `PROCEDURE process_text(regnamespace, text)`
 : Procedure for processing a set of InfluxDB protocol lines and insert
-: them into the correct table.
+  them into the correct table.
 
 [1]: https://github.com/timescale/pg_influx
 [line-protocol]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol
