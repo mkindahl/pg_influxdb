@@ -37,6 +37,25 @@ sub has_headers {
     ok( all { $response->header($_) } @headers );
 }
 
+sub test_endpoint {
+    my ( $endpoint, $input, $code, $reason, $check ) = @_;
+    my $output   = curl $endpoint, $input;
+    my $response = HTTP::Response->parse($output);
+    has_headers( $response, 'Date', 'Connection' );
+    is_response( $response, $code, $reason );
+    $check->($response) if defined $check;
+}
+
+sub has_error {
+    my ($error) = @_;
+    my $func = sub {
+        my ($response) = @_;
+        my $json = decode_json( $response->content );
+        is( $json->{'error'}, $error );
+    };
+    return $func;
+}
+
 my ( $output, $response, $json, $expected, $result );
 
 my $node = PostgreSQL::Test::Cluster->new('main');
@@ -67,88 +86,63 @@ CREATE TABLE $schema.disk(_time timestamptz, mode text, free integer, _tags json
 END_OF_TEXT
 
 # Check that using the wrong endpoint will fail with an error
-$output = curl "http://localhost:$port/writ", <<'END_OF_LINES';
+test_endpoint "http://localhost:$port/writ", <<'END', 404, 'Not Found';
 disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574753954000000000
-END_OF_LINES
+END
 
-$response = HTTP::Response->parse($output);
-is_response( $response, 404, 'Not Found' );
-has_headers( $response, 'Date', 'Connection' );
-
-$output = curl "http://localhost:$port/writer", <<'END_OF_LINES';
+test_endpoint "http://localhost:$port/writer", <<'END', 404, 'Not Found';
 disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574753954000000000
-END_OF_LINES
-
-$response = HTTP::Response->parse($output);
-is_response( $response, 404, 'Not Found' );
-has_headers( $response, 'Date', 'Connection' );
+END
 
 # Check that we get a proper response on a syntax error
-$output = curl "http://localhost:$port/write", <<'END_OF_LINES';
+test_endpoint "http://localhost:$port/write",
+  <<'END', 400, 'Bad Request', has_error("syntax error");
 cpu,usage=12 1574753954000000000
-END_OF_LINES
-
-$response = HTTP::Response->parse($output);
-is_response( $response, 400, 'Bad Request' );
-has_headers( $response, 'Date', 'Connection' );
-$json = decode_json $response->content;
-is( $json->{'error'}, "syntax error" );
+END
 
 # Check that when trying to insert into a measurement that does not
 # exist generates an error.
-$output = curl "http://localhost:$port/write", <<'END_OF_LINES';
+test_endpoint "http://localhost:$port/write",
+  <<'END', 400, 'Bad Request', has_error(q/no relation "cpu" found in namespace "metrics"/);
 cpu usage=1.22 1574753954000000000
-END_OF_LINES
-
-$response = HTTP::Response->parse($output);
-is_response( $response, 400, 'Bad Request' );
-has_headers( $response, 'Date', 'Connection' );
-$json = decode_json $response->content;
-is( $json->{'error'}, q/no relation "cpu" found in namespace "metrics"/ );
+END
 
 # Check that we can write data through the endpoint and get the right
-# result.
-$output = curl "http://localhost:$port/write", <<'END_OF_LINES';
+# result. Note that this involves lines that do not have a timestamp,
+# and these should be added but will have the server timestamp.
+test_endpoint "http://localhost:$port/write", <<'END', 204, 'No Content';
 disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574753954000000000
 disk,mode=rw,path=/boot/efi free=527807775i,total=1000i,used_percent=1.12
 disk,mode=rw,path=/boot/efi free=527808830i,total=2000i,used_percent=1.11 1574753974000000000
 disk,mode=rw,path=/boot/efi free=527809294i,total=3000i,used_percent=20.3
 disk,mode=rw,path=/boot/efi free=527806464i,total=4000i,used_percent=1.49 1574753994000000000
-END_OF_LINES
+END
 
 is( $node->safe_psql( "postgres", "select count(*) from $schema.disk" ), 5 );
 
-$response = HTTP::Response->parse($output);
-is_response( $response, 204, 'No Content' );
-has_headers( $response, 'Date', 'Connection' );
-
-$result = $node->safe_psql( "postgres", <<"END_OF_SQL" );
+$result = $node->safe_psql( "postgres", <<"END" );
 select *
   from $schema.disk
  where _time between '2019-11-26 00:00:00'
                  and '2019-11-27 00:00:00'
 order by _time;
-END_OF_SQL
+END
 
-$expected = trim(<<'END_OF_TEXT');
+$expected = trim(<<'END');
 2019-11-26 08:39:14+01|rw|527806464|{"path": "/boot/efi"}|{"total": 0, "used_percent": 1.49}
 2019-11-26 08:39:34+01|rw|527808830|{"path": "/boot/efi"}|{"total": 2000, "used_percent": 1.11}
 2019-11-26 08:39:54+01|rw|527806464|{"path": "/boot/efi"}|{"total": 4000, "used_percent": 1.49}
-END_OF_TEXT
+END
 
 is( $result, $expected );
 
 # Check that write endpoint is handled correctly even when we have
 # parameters in the URL. Databases are not used yet, but it should
 # work anyway.
-$output = curl "http://localhost:$port/write?db=mydb", <<'END_OF_LINES';
+test_endpoint "http://localhost:$port/write?db=mydb", <<'END', 204, 'No Content';
 disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574853954000000000
 disk,mode=rw,path=/boot/efi free=527807775i,total=1000i,used_percent=1.12 1574853964000000000
-END_OF_LINES
-
-$response = HTTP::Response->parse($output);
-is_response( $response, 204, 'No Content' );
-has_headers( $response, 'Date' );
+END
 
 $result = $node->safe_psql( "postgres", <<"END_OF_SQL" );
 select *
