@@ -31,6 +31,7 @@
 #include <utils/guc.h>
 #include <utils/hsearch.h>
 #include <utils/jsonb.h>
+#include <utils/lsyscache.h>
 #include <utils/memutils.h>
 #include <utils/resowner.h>
 
@@ -62,14 +63,13 @@ typedef enum InfluxHttpRequestType {
 } InfluxHttpRequestType;
 
 typedef struct InfluxHttpRequestData {
-  InfluxHttpRequestType type;
+  InfluxHttpRequestType type; /* Endpoint type, e.g, a write endpoint */
+  Oid nspoid;                 /* Namespace OID for the "database" */
 } InfluxHttpRequestData;
 
-static void HttpWorkerInsertMeasurements(const char* buf, size_t buflen) {
+static void HttpWorkerInsertMeasurements(Oid nspid, const char* buf,
+                                         size_t buflen) {
   int err;
-  Oid nspoid;
-
-  pgstat_report_activity(STATE_RUNNING, "initializing worker_spi schema");
 
   SetCurrentStatementStartTimestamp();
   StartTransactionCommand();
@@ -79,9 +79,9 @@ static void HttpWorkerInsertMeasurements(const char* buf, size_t buflen) {
 
   PushActiveSnapshot(GetTransactionSnapshot());
 
-  nspoid = get_namespace_oid(influxdb_schema_name, false);
-  elog(LOG, "processing text:\n%s", buf);
-  process_text_internal(nspoid, (char*)buf, buflen);
+  pgstat_report_activity(STATE_RUNNING, "processing lines");
+
+  process_text_internal(nspid, (char*)buf, buflen);
 
   if ((err = SPI_finish()) != SPI_OK_FINISH)
     elog(ERROR, "SPI_finish failed: %s", SPI_result_code_string(err));
@@ -92,15 +92,62 @@ static void HttpWorkerInsertMeasurements(const char* buf, size_t buflen) {
   pgstat_report_activity(STATE_IDLE, NULL);
 }
 
+static void handle_write_param(InfluxHttpRequestData* data, const char* key,
+                               const char* val, const char* endptr) {
+  const size_t keylen = (val - 1) - key;
+  const size_t vallen = endptr - val;
+  char name[NAMEDATALEN] = {0};
+
+  if (strncmp(key, "db", keylen) == 0) {
+    memcpy(name, val, vallen);
+    data->nspoid = get_namespace_oid(name, false);
+  }
+}
+
+static void parse_write_params(InfluxHttpRequestData* data, const char* start) {
+  const char* key = start + 1;
+  const char* val = NULL;
+  const char* ptr;
+
+  elog(LOG, "%s: %s", __func__, start);
+
+  /* If it doesn't start with a '?', there are no parameters */
+  if (*start != '?')
+    return;
+
+  /* From RFC 3986 3.4:
+   *
+   *   The query component is indicated by the first question mark
+   *   ("?")  character and terminated by a number sign ("#")
+   *   character or by the end of the URI.
+   *
+   * Here the query component will start after the question mark and
+   * end with the first space (which is followed by the HTTP version).
+   */
+  for (ptr = start + 1; *ptr != '#' && *ptr != ' '; ++ptr) {
+    if (*ptr == '=') {
+      val = ptr + 1;
+    } else if (*ptr == '&') {
+      Assert(val != NULL && key != NULL);
+      handle_write_param(data, key, val, ptr);
+      key = ptr + 1; /* Start of next key */
+      val = NULL;    /* The value does not exist here */
+    }
+  }
+
+  /* Handle last parameter, if there were one */
+  if (val)
+    handle_write_param(data, key, val, ptr);
+}
+
 static int on_url(http_parser* parser, const char* at, size_t length) {
   const char write[] = "/write";
   size_t pathlen = strcspn(at, "? ");
 
-  elog(LOG, "%s: saw length %lu in %s", __func__, pathlen, at);
-
   if (pathlen == sizeof(write) - 1 && strncmp(at, write, pathlen) == 0) {
     InfluxHttpRequestData* data = parser->data;
     data->type = OPERATION_WRITE;
+    parse_write_params(data, &at[pathlen]);
     return 0; /*  All OK */
   }
 
@@ -113,7 +160,7 @@ static int on_body(http_parser* parser, const char* buf, size_t len) {
   InfluxHttpRequestData* data = parser->data;
   switch (data->type) {
     case OPERATION_WRITE:
-      HttpWorkerInsertMeasurements(buf, len);
+      HttpWorkerInsertMeasurements(data->nspoid, buf, len);
       return 0;
     default:
       return 1;
@@ -533,12 +580,16 @@ void InfluxHttpWorkerMain(Datum arg) {
 
   CurrentResourceOwner = resowner;
 
+  elog(LOG, "%s: CurrentResourceOwner=%p", __func__, CurrentResourceOwner);
+
   pgstat_report_activity(STATE_RUNNING, "initializing worker state");
 
   InfluxHttpWorkerInitState(&state);
 
   while (!ShutdownRequestPending) {
     int nfds;
+
+    elog(LOG, "%s: CurrentResourceOwner=%p", __func__, CurrentResourceOwner);
 
     CHECK_FOR_INTERRUPTS();
 
@@ -563,6 +614,13 @@ void InfluxHttpWorkerMain(Datum arg) {
       else
         InfluxHttpWorkerProcessData(&state, fd);
     }
+
+    /*
+     * We have a single resource owner for all connection, which
+     * works, but we should probably have a resource owner for each
+     * connection.
+     */
+    CurrentResourceOwner = resowner;
   }
 
   proc_exit(1);

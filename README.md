@@ -1,16 +1,21 @@
 # InfluxDB API to PostgreSQL
 
-This extension implements a InfluxDB API to PostgreSQL allowing you to
-interact with PostgreSQL as if it was an InfluxDB instance.
+This extension implements a [InfluxDB API][influx-api] to PostgreSQL
+allowing you to interact with PostgreSQL as if it was an InfluxDB
+instance.
 
 Currently, it supports writing the InfluxDB Line Protocol to a
 PostgreSQL database.
 
-This is a re-implementation of the work done in [`pg_influx`][1] and
-focused on providing a more complete API resembling InfluxDB API
-version 1 and version 2 with both UDP and HTTP support. It also aims
-to have better support for the InfluxDB Line Protocol and be a true
-replacement for using InfluxDB to the extent that it is possible.
+This is a re-implementation of the work done in
+[`pg_influx`][pg-influx] and focused on providing a more complete API
+resembling [InfluxDB API][influx-api] version 1 and version 2 with
+both UDP and HTTP support (although only version 1 is supported
+currently).
+
+It also aims to have better support for the InfluxDB Line Protocol and
+be a true replacement for using InfluxDB to the extent that it is
+possible.
 
 ## Building and Installing
 
@@ -37,15 +42,15 @@ Add the database you want the workers to connect to in the
 
 ```
 shared_preload_libraries = `influxdb`
-influxdb.databases = 'my_database'
+influxdb.database = 'my_database'
 ```
 
 ## InfluxDB Line Protocol
 
-The [InfluxDB Line Protocol][ilp] is a compact line-oriented
+The [InfluxDB Line Protocol][line-protocol] is a compact line-oriented
 protocol for sending measurements from devices.
 
-The following example is from the [specification page][ilp]:
+The following example is from the [specification page][line-protocol]:
 
 ```
 myMeasurement,tag1=value1,tag2=value2 fieldKey="fieldValue" 1556813561098000000
@@ -54,8 +59,6 @@ myMeasurement,tag1=value1,tag2=value2 fieldKey="fieldValue" 1556813561098000000
 It consists of a measurement name, an optional set of tags, a set of
 field values, and an optional timestamp, typically in nanoseconds
 since the epoch.
-
-[ilp]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/
 
 ## Differences from InfluxDB Line Protocol
 
@@ -115,15 +118,57 @@ is no timestamp.
 
 ## HTTP Endpoint
 
-Here is an example that can be used to feed data to the HTTP
-endpoint. Notice that you cannot select the database to write to since
-the worker has to connect to a database before starting and then has
-to keep connected to that database.
+The HTTP endpoint is mimicing the [InfluxDB API][influx-api], but
+right now only handles writes.
+
+### HTTP `/write` endpoint
+
+The `/write` endpoint is used to write rows to the database and it
+requires a `db` parameter to be provided with the URL signifying the
+schema that will be used for the metric table.
+
+After processing a single request, the connection is immediately shut
+down with a `Connection: close` header, regardless of what the client
+requested.
+
+#### Requests
+
+The server accept `POST` requests with lines in the [InfluxDB Line
+Protocol][line-protocol] format as input. The rows are written to a table with
+the same name as the measurement and in the schema given by the `db`
+parameter.
+
+For example, to write a few metrics to the table `metrics.cpu` table,
+you can use the following `curl` command:
 
 ```bash
-curl -i -XPOST 'http://localhost:8086/write \
-    --data-binary 'cpu_load_short,host=server01,region=us-west value=0.64 1434055562000000000'`
+curl -is 'http://localhost:8086/write?db=metrics' --data-binary @- <<END_OF_INPUT
+cpu,cpu=cpu0,host=fury usage_guest=0,usage_idle=95.91 1574753954000000000
+cpu,cpu=cpu1,host=fury usage_guest=0,usage_idle=92.15 1574753954000000000
+cpu,cpu=cpu2,host=fury usage_guest=0,usage_idle=90.74 1574753954000000000
+END_OF_INPUT
 ```
+
+For the requests, the `Content-Type` is currently ignored, but for
+future compatibility you should use a `Content-Type` header with
+`application/x-www-form-urlencoded`, `application/octet-stream` (which
+is the HTTP default is no content type is provided), or `text/plain`.
+
+We support the `application/x-www-form-urlencoded` content type since
+the examples on the [InfluxDB API][influx-api] uses this with the
+examples so it is likely to be supported.
+
+#### Responses
+
+Responses sent back are always using `application/json` with a JSON
+object with the following fields:
+
+`error`
+: Brief error message. This is the same as provided by InfluxDB.
+
+`detail`
+: Error message details, if available. This is not available from
+  InfluxDB.
 
 ## Options
 
@@ -156,10 +201,6 @@ The following options are available:
 `influxdb.databases` (`string`)
 : Name of the database that the HTTP workers shall connect to.
 
-`influxdb.schema_name` (`string`)
-: Name of the schema where all measurement tables are stored. Default
-  is `measurements`.
-
 ## Functions
 
 There are some functions available, which are mostly for debugging and
@@ -176,12 +217,6 @@ testing:
 `PROCEDURE process_text(regnamespace, text)`
 : Procedure for processing a set of InfluxDB protocol lines and insert
   them into the correct table.
-
-[1]: https://github.com/timescale/pg_influx
-[line-protocol]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol
-[quotes]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/#quotes
-[boolean]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/#boolean
-[duplicate]: https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/#duplicate-points
 
 ## Copyrights
 
@@ -225,3 +260,14 @@ For all other files, the GNU Affero General Public License applies:
     You should have received a copy of the GNU Affero General Public
     License along with this program.  If not, see
     <https://www.gnu.org/licenses/>.
+
+[pg-influx]: https://github.com/timescale/pg_influx
+[line-protocol]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol
+[influx-api]: https://docs.influxdata.com/influxdb/v1/tools/api
+[quotes]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/#quotes
+[boolean]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/#boolean
+[duplicate]: https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/#duplicate-points
+
+
+
+

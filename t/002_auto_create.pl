@@ -48,7 +48,6 @@ $node->init;
 $node->append_conf( 'postgresql.conf', <<"END_OF_TEXT");
 shared_preload_libraries = 'influxdb'
 influxdb.database = 'postgres'
-influxdb.schema_name = 'metrics'
 influxdb.http_workers = 2
 influxdb.http_service = $port
 influxdb.auto_create_table = on
@@ -56,9 +55,7 @@ END_OF_TEXT
 
 $node->start;
 
-my $schema = $node->safe_psql( "postgres", "SHOW influxdb.schema_name" );
-
-is( $schema, "metrics" );
+my $schema = "metrics";
 
 $node->safe_psql( "postgres", <<"END_OF_TEXT");
 CREATE EXTENSION influxdb;
@@ -67,7 +64,7 @@ END_OF_TEXT
 
 # Check that inserting into a measurement table that does not exist
 # will create it.
-$output = curl "http://localhost:$port/write", <<'END_OF_LINES';
+$output = curl "http://localhost:$port/write?db=$schema", <<'END_OF_LINES';
 cpu usage=1.2 1574753954000000000
 cpu,kind=i836 usage=1.6 1574763954000000000
 END_OF_LINES
