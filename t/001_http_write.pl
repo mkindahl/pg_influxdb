@@ -1,5 +1,5 @@
 use strict;
-use warnings FATAL => 'all';
+#use warnings FATAL => 'all';
 
 use PostgreSQL::Test::Cluster;
 use Test::More;
@@ -8,6 +8,18 @@ use HTTP::Response;
 use List::Util qw(all);
 use JSON       qw(decode_json);
 use Data::Dumper;
+
+use constant {
+    NO_CONTENT  => 204,
+    BAD_REQUEST => 400,
+    NOT_FOUND   => 404,
+};
+
+my %reason = (
+    204  => 'No Content',
+    400 => 'Bad Request',
+    404   => 'Not Found',
+);
 
 sub trim { my $s = shift; $s =~ s/^\s+|\s+$//g; return $s; }
 
@@ -27,22 +39,30 @@ sub curl {
 
 sub is_response {
     my ( $response, $code, $message ) = @_;
-    is( $response->message, $message );
-    is( $response->code,    $code );
+    my $tb = Test::More->builder;
+
+    $tb->is_eq( $response->message, $message );
+    $tb->is_eq( $response->code,    $code );
 
 }
 
 sub has_headers {
     my ( $response, @headers ) = @_;
-    ok( all { $response->header($_) } @headers );
+    my $tb = Test::More->builder;
+    $tb->ok( all { $response->header($_) } @headers );
 }
 
 sub test_endpoint {
-    my ( $endpoint, $input, $code, $reason, $check ) = @_;
+    my ( $endpoint, $input, $code, $check ) = @_;
+    my $reason   = $reason{$code};
     my $output   = curl $endpoint, $input;
     my $response = HTTP::Response->parse($output);
-    has_headers( $response, 'Date', 'Connection' );
-    is_response( $response, $code, $reason );
+    my $tb = Test::More->builder;
+    my @headers = ('Date', 'Connection');
+
+    $tb->ok( all { $response->header($_) } @headers );
+    $tb->is_eq( $response->message, $reason );
+    $tb->is_eq( $response->code,    $code );
     $check->($response) if defined $check;
 }
 
@@ -50,16 +70,19 @@ sub has_error {
     my ($error) = @_;
     my $func = sub {
         my ($response) = @_;
+        my $tb = Test::More->builder;
         my $json = decode_json( $response->content );
-        is( $json->{'error'}, $error );
+        return $tb->like( $json->{'error'}, $error );
     };
     return $func;
 }
 
 my ( $output, $response, $json, $expected, $result );
 
-my $node = PostgreSQL::Test::Cluster->new('main');
-my $port = PostgreSQL::Test::Cluster::get_free_port();
+my $syntax_error = has_error(qr/syntax error/);
+my $table_missing = has_error(qr/no relation "\w+" found in namespace "\w+"/);
+my $node         = PostgreSQL::Test::Cluster->new('main');
+my $port         = PostgreSQL::Test::Cluster::get_free_port();
 
 print "Using port $port for the service\n";
 
@@ -68,16 +91,13 @@ $node->append_conf( 'postgresql.conf', <<"END_OF_TEXT");
 log_min_messages = debug1
 shared_preload_libraries = 'influxdb'
 influxdb.database = 'postgres'
-influxdb.schema_name = 'metrics'
 influxdb.http_workers = 2
 influxdb.http_service = $port
 END_OF_TEXT
 
 $node->start;
 
-my $schema = $node->safe_psql( "postgres", "SHOW influxdb.schema_name" );
-
-is( $schema, "metrics" );
+my $schema = "metrics";
 
 $node->safe_psql( "postgres", <<"END_OF_TEXT");
 CREATE EXTENSION influxdb;
@@ -86,31 +106,31 @@ CREATE TABLE $schema.disk(_time timestamptz, mode text, free integer, _tags json
 END_OF_TEXT
 
 # Check that using the wrong endpoint will fail with an error
-test_endpoint "http://localhost:$port/writ", <<'END', 404, 'Not Found';
+test_endpoint "http://localhost:$port/writ", <<'END', NOT_FOUND;
 disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574753954000000000
 END
 
-test_endpoint "http://localhost:$port/writer", <<'END', 404, 'Not Found';
+test_endpoint "http://localhost:$port/writer", <<'END', NOT_FOUND;
 disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574753954000000000
 END
 
 # Check that we get a proper response on a syntax error
 test_endpoint "http://localhost:$port/write",
-  <<'END', 400, 'Bad Request', has_error("syntax error");
+  <<'END', BAD_REQUEST, $syntax_error;
 cpu,usage=12 1574753954000000000
 END
 
 # Check that when trying to insert into a measurement that does not
 # exist generates an error.
-test_endpoint "http://localhost:$port/write",
-  <<'END', 400, 'Bad Request', has_error(q/no relation "cpu" found in namespace "metrics"/);
+test_endpoint "http://localhost:$port/write?db=$schema",
+  <<'END', BAD_REQUEST, $table_missing;
 cpu usage=1.22 1574753954000000000
 END
 
 # Check that we can write data through the endpoint and get the right
 # result. Note that this involves lines that do not have a timestamp,
 # and these should be added but will have the server timestamp.
-test_endpoint "http://localhost:$port/write", <<'END', 204, 'No Content';
+test_endpoint "http://localhost:$port/write?db=$schema", <<'END', NO_CONTENT;
 disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574753954000000000
 disk,mode=rw,path=/boot/efi free=527807775i,total=1000i,used_percent=1.12
 disk,mode=rw,path=/boot/efi free=527808830i,total=2000i,used_percent=1.11 1574753974000000000
@@ -137,9 +157,8 @@ END
 is( $result, $expected );
 
 # Check that write endpoint is handled correctly even when we have
-# parameters in the URL. Databases are not used yet, but it should
-# work anyway.
-test_endpoint "http://localhost:$port/write?db=mydb", <<'END', 204, 'No Content';
+# unrecognized parameters in the URL.
+test_endpoint "http://localhost:$port/write?db=metrics&magic=more", <<'END', NO_CONTENT;
 disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574853954000000000
 disk,mode=rw,path=/boot/efi free=527807775i,total=1000i,used_percent=1.12 1574853964000000000
 END

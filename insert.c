@@ -228,6 +228,7 @@ void InfluxInsertDataPoint(Oid nspid, InfluxDataPoint* data_point,
       relid = InfluxCreateTable(nspid, data_point, raise_error);
     } else if (raise_error)
       ereport(ERROR,
+              errcode(ERRCODE_UNDEFINED_TABLE),
               errmsg("no relation \"%s\" found in namespace \"%s\"",
                      measurement->data,
                      get_namespace_name(nspid)));

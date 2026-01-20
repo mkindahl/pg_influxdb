@@ -53,16 +53,21 @@ bool influxdb_keep_quotes = false;
 bool influxdb_auto_create_table = false;
 char* influxdb_http_service = INFLUXDB_DEFAULT_HTTP_SERVICE;
 char* influxdb_database = NULL;
-char* influxdb_schema_name = INFLUXDB_DEFAULT_SCHEMA_NAME;
 int influxdb_http_workers = 4;
 
 void process_text_internal(Oid nspid, char* buf, size_t len) {
   InfluxParseState state;
 
+  elog(DEBUG1,
+       "processing text using schema %s:\n%s",
+       get_namespace_name(nspid),
+       buf);
+
   InfluxParseStateInit(&state, buf, len);
 
   while (InfluxParseStateHasMore(&state)) {
     InfluxDataPoint data_point;
+
     InfluxParseDataPoint(&state, &data_point);
     InfluxInsertDataPoint(nspid, &data_point, true);
   }
@@ -162,17 +167,6 @@ void _PG_init(void) {
                              NULL,           /* check hook */
                              NULL,           /* assign hook */
                              NULL);          /* show hook */
-
-  DefineCustomStringVariable("influxdb.schema_name",
-                             "Schema name for measurement tables.",
-                             "Schema name for all tables with measurements.",
-                             &influxdb_schema_name,
-                             INFLUXDB_DEFAULT_SCHEMA_NAME, /* boot value */
-                             PGC_POSTMASTER,               /* option context */
-                             0,                            /* option flags */
-                             NULL,                         /* check hook */
-                             NULL,                         /* assign hook */
-                             NULL);                        /* show hook */
 
   MarkGUCPrefixReserved("influxdb");
 
