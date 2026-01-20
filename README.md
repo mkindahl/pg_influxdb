@@ -37,7 +37,7 @@ Add the database you want the workers to connect to in the
 
 ```
 shared_preload_libraries = `influxdb`
-influxdb.database_name = 'my_database'
+influxdb.databases = 'my_database'
 ```
 
 ## InfluxDB Line Protocol
@@ -153,7 +153,7 @@ The following options are available:
   use something like `http` if you want. Default is to use the same
   port as InfluxDB, which is 8086.
 
-`influxdb.database_name` (`string`)
+`influxdb.databases` (`string`)
 : Name of the database that the HTTP workers shall connect to.
 
 `influxdb.schema_name` (`string`)

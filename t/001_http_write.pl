@@ -67,7 +67,7 @@ $node->init;
 $node->append_conf( 'postgresql.conf', <<"END_OF_TEXT");
 log_min_messages = debug1
 shared_preload_libraries = 'influxdb'
-influxdb.database_name = 'postgres'
+influxdb.database = 'postgres'
 influxdb.schema_name = 'metrics'
 influxdb.http_workers = 2
 influxdb.http_service = $port
