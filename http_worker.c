@@ -343,6 +343,7 @@ static HttpConnectionEntry* http_worker_get_connection(
 }
 
 void InfluxHttpWorkerAcceptConnection(InfluxHttpWorkerState* state) {
+  pgstat_report_activity(STATE_RUNNING, "accepting connections");
   while (1) {
     struct sockaddr_in addr;
     socklen_t addrlen = sizeof(addr);
@@ -357,7 +358,7 @@ void InfluxHttpWorkerAcceptConnection(InfluxHttpWorkerState* state) {
         ereport(LOG,
                 errcode_for_socket_access(),
                 errmsg("failed to accept connection: %m"));
-        break;
+        continue;
       }
     }
 
@@ -365,7 +366,9 @@ void InfluxHttpWorkerAcceptConnection(InfluxHttpWorkerState* state) {
     elog(LOG, "accepted connection from %s", addr_text);
 
     if (set_nonblocking(client_fd) == -1) {
-      perror("set_nonblocking");
+      ereport(LOG,
+              errcode_for_socket_access(),
+              errmsg("failed to set socket to non-blocking: %m"));
       close(client_fd);
       continue;
     }
@@ -385,6 +388,8 @@ void InfluxHttpWorkerAcceptConnection(InfluxHttpWorkerState* state) {
 void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int client_fd) {
   MemoryContext oldcontext = CurrentMemoryContext;
   ResourceOwner oldowner = CurrentResourceOwner;
+
+  pgstat_report_activity(STATE_RUNNING, "processing data");
 
   PG_TRY();
   {
@@ -522,10 +527,9 @@ void InfluxHttpWorkerMain(Datum arg) {
   CurrentMemoryContext = AllocSetContextCreate(
       TopMemoryContext, "InfluxHttpWorker", ALLOCSET_DEFAULT_SIZES);
 
-  elog(LOG,
-       "InfluxDB HTTP Worker connecting to database %s",
-       influxdb_database_name);
-  BackgroundWorkerInitializeConnection(influxdb_database_name, NULL, 0);
+  elog(
+      LOG, "InfluxDB HTTP Worker connecting to database %s", influxdb_database);
+  BackgroundWorkerInitializeConnection(influxdb_database, NULL, 0);
 
   CurrentResourceOwner = resowner;
 
@@ -554,13 +558,10 @@ void InfluxHttpWorkerMain(Datum arg) {
 
     for (int i = 0; i < nfds; i++) {
       int fd = events[i].data.fd;
-      if (fd == state.listen_fd) {
-        pgstat_report_activity(STATE_RUNNING, "accepting connection");
+      if (fd == state.listen_fd)
         InfluxHttpWorkerAcceptConnection(&state);
-      } else {
-        pgstat_report_activity(STATE_RUNNING, "processing data");
+      else
         InfluxHttpWorkerProcessData(&state, fd);
-      }
     }
   }
 
@@ -574,7 +575,7 @@ void InfluxHttpWorkerInit(BackgroundWorker* worker) {
   worker->bgw_flags =
       BGWORKER_SHMEM_ACCESS | BGWORKER_BACKEND_DATABASE_CONNECTION;
 
-  elog(LOG, "%s: initializing HTTP worker", __func__);
+  elog(DEBUG1, "%s: initializing HTTP worker", __func__);
 
   worker->bgw_start_time = BgWorkerStart_RecoveryFinished;
   worker->bgw_restart_time = BGW_NEVER_RESTART;

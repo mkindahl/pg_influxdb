@@ -52,7 +52,7 @@ PG_FUNCTION_INFO_V1(process_text);
 bool influxdb_keep_quotes = false;
 bool influxdb_auto_create_table = false;
 char* influxdb_http_service = INFLUXDB_DEFAULT_HTTP_SERVICE;
-char* influxdb_database_name = NULL;
+char* influxdb_database = NULL;
 char* influxdb_schema_name = INFLUXDB_DEFAULT_SCHEMA_NAME;
 int influxdb_http_workers = 4;
 
@@ -96,42 +96,41 @@ void _PG_init(void) {
   /* We use PGC_USERSET to be able to debug this. It could be PGC_SIGHUP. */
   DefineCustomBoolVariable(
       "influxdb.keep_quotes",
+      "Keep quotes as part of strings.",
       "Keep quotes as part of the string for quoted strings.",
-      NULL,
       &influxdb_keep_quotes,
-      false,
-      PGC_USERSET,
-      0,
-      NULL,
-      NULL,
-      NULL);
+      false,       /* boot value */
+      PGC_USERSET, /* option context */
+      0,           /* option flags */
+      NULL,        /* check hook */
+      NULL,        /* assign hook */
+      NULL);       /* show hook */
 
   DefineCustomBoolVariable(
       "influxdb.auto_create_table",
       "Automatically create tables for measurements.",
       "Automatically create missing tables for measurements.",
       &influxdb_auto_create_table,
-      false,
-      PGC_USERSET,
-      0,
-      NULL,
-      NULL,
-      NULL);
+      false,       /* boot value */
+      PGC_USERSET, /* option context */
+      0,           /* option flags */
+      NULL,        /* check hook */
+      NULL,        /* assign hook */
+      NULL);       /* show hook */
 
-  DefineCustomIntVariable("influxdb.http_workers",   /* option name */
-                          "Number of HTTP workers.", /* short descriptor */
-                          /* long description */
-                          "Number of HTTP workers to spawn when starting up"
-                          "the server.",
-                          &influxdb_http_workers, /* value address */
-                          4,                      /* boot value */
-                          0,                      /* min value */
-                          20,                     /* max value */
-                          PGC_SIGHUP,             /* option context */
-                          0,                      /* option flags */
-                          NULL,                   /* check hook */
-                          NULL,                   /* assign hook */
-                          NULL);                  /* show hook */
+  DefineCustomIntVariable(
+      "influxdb.http_workers",
+      "Number of HTTP workers.",
+      "Number of HTTP workers to spawn when starting up the server.",
+      &influxdb_http_workers,
+      4,          /* boot value */
+      0,          /* min value */
+      20,         /* max value */
+      PGC_SIGHUP, /* option context */
+      0,          /* option flags */
+      NULL,       /* check hook */
+      NULL,       /* assign hook */
+      NULL);      /* show hook */
 
   if (!process_shared_preload_libraries_in_progress)
     return;
@@ -142,34 +141,38 @@ void _PG_init(void) {
       "Service name or port number to listen for HTTP connections. If it is a "
       "service name, it will be looked up.",
       &influxdb_http_service,
-      INFLUXDB_DEFAULT_HTTP_SERVICE,
-      PGC_POSTMASTER,
-      0,
-      NULL,
-      NULL,
-      NULL);
+      INFLUXDB_DEFAULT_HTTP_SERVICE, /* boot value */
+      PGC_POSTMASTER,                /* option context */
+      0,                             /* option flags */
+      NULL,                          /* check hook */
+      NULL,                          /* assign hook */
+      NULL);                         /* show hook */
 
-  DefineCustomStringVariable("influxdb.database_name",
-                             "Database name for workers.",
-                             "Database name that workers will connect to.",
-                             &influxdb_database_name,
-                             NULL,
-                             PGC_POSTMASTER,
-                             0,
-                             NULL,
-                             NULL,
-                             NULL);
+  /*
+   * We can only write to a single database for each cluster since we
+   * cannot know what database to connect to without parsing the query.
+   */
+  DefineCustomStringVariable("influxdb.database",
+                             "Database name for all workers.",
+                             "Database name for which workers will be created.",
+                             &influxdb_database,
+                             NULL,           /* boot value */
+                             PGC_POSTMASTER, /* option context */
+                             0,              /* option flags */
+                             NULL,           /* check hook */
+                             NULL,           /* assign hook */
+                             NULL);          /* show hook */
 
   DefineCustomStringVariable("influxdb.schema_name",
                              "Schema name for measurement tables.",
                              "Schema name for all tables with measurements.",
                              &influxdb_schema_name,
-                             INFLUXDB_DEFAULT_SCHEMA_NAME,
-                             PGC_POSTMASTER,
-                             0,
-                             NULL,
-                             NULL,
-                             NULL);
+                             INFLUXDB_DEFAULT_SCHEMA_NAME, /* boot value */
+                             PGC_POSTMASTER,               /* option context */
+                             0,                            /* option flags */
+                             NULL,                         /* check hook */
+                             NULL,                         /* assign hook */
+                             NULL);                        /* show hook */
 
   MarkGUCPrefixReserved("influxdb");
 

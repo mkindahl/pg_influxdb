@@ -30,7 +30,7 @@ extern Datum process_text(PG_FUNCTION_ARGS);
 extern bool influxdb_keep_quotes;
 extern bool influxdb_auto_create_table;
 extern char* influxdb_http_service;
-extern char* influxdb_database_name;
+extern char* influxdb_database;
 extern char* influxdb_schema_name;
 extern int influxdb_http_workers;
 
