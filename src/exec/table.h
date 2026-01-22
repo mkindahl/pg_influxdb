@@ -21,7 +21,7 @@
 
 #include <postgres.h>
 
-#include "parser.h"
+#include "proto/parser.h"
 
 extern Oid InfluxCreateTable(Oid nspid, InfluxDataPoint* data_point,
                              bool raise_error);

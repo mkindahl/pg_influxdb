@@ -16,7 +16,7 @@
  * <https://www.gnu.org/licenses/>.
  */
 
-#include "http_worker.h"
+#include "http/worker.h"
 
 #include <postgres.h>
 
