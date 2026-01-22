@@ -15,7 +15,10 @@
 # <https://www.gnu.org/licenses/>.
 
 MODULE_big = influxdb
-OBJS = influxdb.o parser.o tokenizer_lex.o utils.o plans.o insert.o table.o network.o http_parser.o http_worker.o
+OBJS_http = src/http/http_parser.o src/http/worker.o
+OBJS_proto = src/proto/tokenizer_lex.o src/proto/parser.o 
+OBJS_exec = src/exec/plans.o src/exec/insert.o src/exec/table.o
+OBJS = src/influxdb.o src/utils.o src/network.o $(OBJS_http) $(OBJS_proto) $(OBJS_exec)
 
 VERSION_influxdb = $(shell perl -ne 'print "$$1" if /^default_version.*(\d+\.\d+)/' influxdb.control)
 
@@ -26,6 +29,8 @@ PGFILEDESC = "influxdb - InfluxDB web interface to PostgreSQL"
 REGRESS = tokenizer parser process create
 TAP_TESTS = 1
 
+PG_CPPFLAGS = -Isrc
+
 PG_CONFIG = pg_config
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
@@ -33,17 +38,21 @@ include $(PGXS)
 influxdb--$(VERSION_influxdb).sql: influxdb.sql
 	cp $< $@
 
-tokenizer_lex.c tokenizer_lex.h: tokenizer_lex.l
+src/protocol/tokenizer_lex.c src/protocol/tokenizer_lex.h: src/protocol/tokenizer_lex.l
 
-http_parser.o: http_parser.c http_parser.h
-http_worker.o: http_worker.c http_worker.h http_parser.h config.h \
- network.h
-influxdb.o: influxdb.c influxdb.h config.h http_worker.h http_parser.h \
- insert.h parser.h
-insert.o: insert.c insert.h parser.h influxdb.h plans.h table.h utils.h
-network.o: network.c network.h
-parser.o: parser.c parser.h
-plans.o: plans.c plans.h
-table.o: table.c table.h parser.h
-tokenizer_lex.o: tokenizer_lex.c parser.h influxdb.h
-utils.o: utils.c utils.h parser.h
+parser.o: src/proto/parser.c src/proto/parser.h
+tokenizer_lex.o: src/proto/tokenizer_lex.c src/proto/parser.h \
+ src/influxdb.h
+worker.o: src/http/worker.c src/http/worker.h src/http/http_parser.h \
+ src/config.h src/http/http_parser.h src/influxdb.h src/network.h \
+ src/utils.h
+http_parser.o: src/http/http_parser.c src/http/http_parser.h
+plans.o: src/exec/plans.c src/exec/plans.h
+table.o: src/exec/table.c src/exec/table.h src/proto/parser.h
+insert.o: src/exec/insert.c src/exec/insert.h src/proto/parser.h \
+ src/influxdb.h src/exec/plans.h src/exec/table.h src/utils.h
+influxdb.o: src/influxdb.c src/influxdb.h src/config.h src/exec/insert.h \
+ src/proto/parser.h src/http/worker.h src/http/http_parser.h \
+ src/proto/parser.h
+network.o: src/network.c src/network.h
+utils.o: src/utils.c src/utils.h src/proto/parser.h

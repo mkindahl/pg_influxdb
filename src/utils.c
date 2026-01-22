@@ -20,7 +20,7 @@
 
 #include <postgres.h>
 
-#include "parser.h"
+#include "proto/parser.h"
 
 Jsonb* InfluxBuildJsonObject(List* items) {
   JsonbParseState* state = NULL;

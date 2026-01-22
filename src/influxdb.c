@@ -39,9 +39,9 @@
 #include <utils/rel.h>
 
 #include "config.h"
-#include "http_worker.h"
-#include "insert.h"
-#include "parser.h"
+#include "exec/insert.h"
+#include "http/worker.h"
+#include "proto/parser.h"
 
 PG_MODULE_MAGIC;
 
