@@ -41,9 +41,15 @@ Add the database you want the workers to connect to in the
 `shared_preload_libraries`:
 
 ```
-shared_preload_libraries = `influxdb`
+shared_preload_libraries = 'influxdb'
 influxdb.database = 'my_database'
 ```
+
+> [!NOTE]
+> It is necessary to add `influxdb` to the `shared_preload_libraries`
+> because this is where the background workers are started. PostgreSQL
+> has support for dynamically spawning workers, but they would not
+> survive a restart so they are not supported right now.
 
 ## InfluxDB Line Protocol
 
@@ -67,7 +73,7 @@ are some subtle differences in semantics, which are outlined here.
 
 ### Quotes and backslashes
 
-From section [Duplicate points][duplicate] we have the following text:
+Section [Duplicate points][duplicate] contains:
 
 > A point is uniquely identified by the measurement name, tag set, and
 > timestamp. If you submit line protocol with the same measurement,
@@ -75,7 +81,7 @@ From section [Duplicate points][duplicate] we have the following text:
 > set becomes the union of the old field set and the new field set,
 > where any conflicts favor the new field set.
 
-And from the [section on quotes][quotes] we have:
+And [section on quotes][quotes] contains:
 
 > Line protocol accepts double and single quotes in measurement names,
 > tag keys, tag values, and field keys, but interprets them as part of
@@ -104,8 +110,8 @@ the GUC `influxdb.keep_quotes` to `on`.
 From [section on boolean values][boolean] only the values `t`, `T`,
 `true`, `True`, `TRUE`, `f`, `F`, `false`, `False`, and `FALSE` are
 boolean. According to this definition, it means that `tRue` is not a
-boolean, but with `pg_influxdb` we consider values `T`, `TRUE`, `F`,
-and `FALSE` in all combinations of case as boolean. This means that
+boolean, but with `pg_influxdb` values `T`, `TRUE`, `F`, and `FALSE`
+in all combinations of case are considered boolean. This means that
 also `tRue` is a boolean (if not quoted).
 
 ### Line endings
@@ -113,8 +119,8 @@ also `tRue` is a boolean (if not quoted).
 According to the [Influx Line Protocol Reference][line-protocol] a
 timestamp can be missing, but if there is a blank at the end of the
 line, this would generate a syntax error. This is very difficult to
-spot so instead we allow blanks at the end of the line even when there
-is no timestamp.
+spot so instead blanks are allowed at the end of the line even when
+there is no timestamp.
 
 ## HTTP Endpoint
 
@@ -127,9 +133,11 @@ The `/write` endpoint is used to write rows to the database and it
 requires a `db` parameter to be provided with the URL signifying the
 schema that will be used for the metric table.
 
-After processing a single request, the connection is immediately shut
-down with a `Connection: close` header, regardless of what the client
-requested.
+> [!NOTE]
+> After processing a single request, the connection is immediately
+> shut down with a `Connection: close` header, regardless of what the
+> client requested. This is allowed by the HTTP standard, but it might
+> come as a suprise to the user.
 
 #### Requests
 
@@ -154,14 +162,16 @@ future compatibility you should use a `Content-Type` header with
 `application/x-www-form-urlencoded`, `application/octet-stream` (which
 is the HTTP default is no content type is provided), or `text/plain`.
 
-We support the `application/x-www-form-urlencoded` content type since
-the examples on the [InfluxDB API][influx-api] uses this with the
-examples so it is likely to be supported.
+> [!NOTE]
+> The content type `application/x-www-form-urlencoded` is supported
+> since the examples on the [InfluxDB API][influx-api] uses this with
+> the examples so it is likely to be supported also in the future.
 
 #### Responses
 
-Responses sent back are always using `application/json` with a JSON
-object with the following fields:
+For any responses that contains contents, the responses sent back are
+always using content type `application/json` with the content being a
+JSON object with the following fields:
 
 `error`
 : Brief error message. This is the same as provided by InfluxDB.
@@ -198,7 +208,7 @@ The following options are available:
   use something like `http` if you want. Default is to use the same
   port as InfluxDB, which is 8086.
 
-`influxdb.databases` (`string`)
+`influxdb.database` (`string`)
 : Name of the database that the HTTP workers shall connect to.
 
 ## Functions
