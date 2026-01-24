@@ -28,17 +28,17 @@ ERROR:  no relation "disk" found in namespace "testing"
 set influxdb.auto_create_table to on;
 call influxdb.process_text('testing', E'disk free=527806464i,total=0i 1574753954000000000');
 \d testing.*
-                        Table "testing.disk"
- Column  |           Type           | Collation | Nullable | Default 
----------+--------------------------+-----------+----------+---------
- _time   | timestamp with time zone |           |          | 
- _tags   | jsonb                    |           |          | 
- _fields | jsonb                    |           |          | 
+                          Table "testing.disk"
+ Column  |            Type             | Collation | Nullable | Default 
+---------+-----------------------------+-----------+----------+---------
+ _time   | timestamp without time zone |           |          | 
+ _tags   | jsonb                       |           |          | 
+ _fields | jsonb                       |           |          | 
 
 \x on
 select * from testing.disk;
 -[ RECORD 1 ]----------------------------
-_time   | Mon Nov 25 23:39:14 2019 PST
+_time   | Tue Nov 26 07:39:14 2019
 _tags   | {}
 _fields | {"free": 527806464, "total": 0}
 
@@ -46,13 +46,13 @@ _fields | {"free": 527806464, "total": 0}
 -- Modify the table and add a new column for the "free" field.
 alter table testing.disk add column free integer;
 \d testing.*
-                        Table "testing.disk"
- Column  |           Type           | Collation | Nullable | Default 
----------+--------------------------+-----------+----------+---------
- _time   | timestamp with time zone |           |          | 
- _tags   | jsonb                    |           |          | 
- _fields | jsonb                    |           |          | 
- free    | integer                  |           |          | 
+                          Table "testing.disk"
+ Column  |            Type             | Collation | Nullable | Default 
+---------+-----------------------------+-----------+----------+---------
+ _time   | timestamp without time zone |           |          | 
+ _tags   | jsonb                       |           |          | 
+ _fields | jsonb                       |           |          | 
+ free    | integer                     |           |          | 
 
 -- This will move the fields that was just added into the new field.
 update testing.disk
@@ -62,21 +62,21 @@ set free = (_fields->>'free')::integer,
 -- constructed for the insert statement.
 \x on
 select * from testing.disk;
--[ RECORD 1 ]-------------------------
-_time   | Mon Nov 25 23:39:14 2019 PST
+-[ RECORD 1 ]---------------------
+_time   | Tue Nov 26 07:39:14 2019
 _tags   | {}
 _fields | {"total": 0}
 free    | 527806464
 
 call influxdb.process_text('testing', E'disk free=12345678i,total=0i 1574753955000000000');
 select * from testing.disk;
--[ RECORD 1 ]-------------------------
-_time   | Mon Nov 25 23:39:14 2019 PST
+-[ RECORD 1 ]---------------------
+_time   | Tue Nov 26 07:39:14 2019
 _tags   | {}
 _fields | {"total": 0}
 free    | 527806464
--[ RECORD 2 ]-------------------------
-_time   | Mon Nov 25 23:39:15 2019 PST
+-[ RECORD 2 ]---------------------
+_time   | Tue Nov 26 07:39:15 2019
 _tags   | {}
 _fields | {"total": 0}
 free    | 12345678

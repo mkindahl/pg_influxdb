@@ -80,8 +80,8 @@ order by _time;
 END_OF_SQL
 
 $expected = trim(<<'END_OF_TEXT');
-2019-11-26 08:39:14+01|{}|{"usage": 1.2}
-2019-11-26 11:25:54+01|{"kind": "i836"}|{"usage": 1.6}
+2019-11-26 07:39:14|{}|{"usage": 1.2}
+2019-11-26 10:25:54|{"kind": "i836"}|{"usage": 1.6}
 END_OF_TEXT
 
 is( $result, $expected );

@@ -38,7 +38,7 @@ Oid InfluxCreateTable(Oid nspid, InfluxDataPoint* data_point,
                    InfluxTokenGetString(&data_point->measurement)->data,
                    -1);
   create->tableElts =
-      list_make3(makeColumnDef("_time", TIMESTAMPTZOID, -1, InvalidOid),
+      list_make3(makeColumnDef("_time", TIMESTAMPOID, -1, InvalidOid),
                  makeColumnDef("_tags", JSONBOID, -1, InvalidOid),
                  makeColumnDef("_fields", JSONBOID, -1, InvalidOid));
   address = DefineRelation(create, RELKIND_RELATION, GetUserId(), NULL, NULL);
