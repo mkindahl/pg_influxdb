@@ -102,7 +102,7 @@ my $schema = "metrics";
 $node->safe_psql( "postgres", <<"END_OF_TEXT");
 CREATE EXTENSION influxdb;
 CREATE SCHEMA $schema;
-CREATE TABLE $schema.disk(_time timestamptz, mode text, free integer, _tags jsonb, _fields jsonb);
+CREATE TABLE $schema.disk(_time timestamp, mode text, free integer, _tags jsonb, _fields jsonb);
 END_OF_TEXT
 
 # Check that using the wrong endpoint will fail with an error
@@ -149,9 +149,9 @@ order by _time;
 END
 
 $expected = trim(<<'END');
-2019-11-26 08:39:14+01|rw|527806464|{"path": "/boot/efi"}|{"total": 0, "used_percent": 1.49}
-2019-11-26 08:39:34+01|rw|527808830|{"path": "/boot/efi"}|{"total": 2000, "used_percent": 1.11}
-2019-11-26 08:39:54+01|rw|527806464|{"path": "/boot/efi"}|{"total": 4000, "used_percent": 1.49}
+2019-11-26 07:39:14|rw|527806464|{"path": "/boot/efi"}|{"total": 0, "used_percent": 1.49}
+2019-11-26 07:39:34|rw|527808830|{"path": "/boot/efi"}|{"total": 2000, "used_percent": 1.11}
+2019-11-26 07:39:54|rw|527806464|{"path": "/boot/efi"}|{"total": 4000, "used_percent": 1.49}
 END
 
 is( $result, $expected );
@@ -172,8 +172,8 @@ order by _time;
 END_OF_SQL
 
 $expected = trim(<<'END_OF_TEXT');
-2019-11-27 12:25:54+01|rw|527806464|{"path": "/boot/efi"}|{"total": 0, "used_percent": 1.49}
-2019-11-27 12:26:04+01|rw|527807775|{"path": "/boot/efi"}|{"total": 1000, "used_percent": 1.12}
+2019-11-27 11:25:54|rw|527806464|{"path": "/boot/efi"}|{"total": 0, "used_percent": 1.49}
+2019-11-27 11:26:04|rw|527807775|{"path": "/boot/efi"}|{"total": 1000, "used_percent": 1.12}
 END_OF_TEXT
 
 is( $result, $expected );
