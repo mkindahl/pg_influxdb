@@ -1,4 +1,5 @@
 use strict;
+
 #use warnings FATAL => 'all';
 
 use PostgreSQL::Test::Cluster;
@@ -16,9 +17,9 @@ use constant {
 };
 
 my %reason = (
-    204  => 'No Content',
+    204 => 'No Content',
     400 => 'Bad Request',
-    404   => 'Not Found',
+    404 => 'Not Found',
 );
 
 sub trim { my $s = shift; $s =~ s/^\s+|\s+$//g; return $s; }
@@ -57,12 +58,14 @@ sub test_endpoint {
     my $reason   = $reason{$code};
     my $output   = curl $endpoint, $input;
     my $response = HTTP::Response->parse($output);
-    my $tb = Test::More->builder;
-    my @headers = ('Date', 'Connection');
+    my $tb       = Test::More->builder;
+    my @headers  = ( 'Date', 'Connection' );
+    my $json     = decode_json( $response->content )  if $response->content;
+    my $errmsg   = "generated error '" . $json->{'error'} . "'" if $response->content;
 
     $tb->ok( all { $response->header($_) } @headers );
-    $tb->is_eq( $response->message, $reason );
-    $tb->is_eq( $response->code,    $code );
+    $tb->is_eq( $response->message, $reason, $errmsg );
+    $tb->is_eq( $response->code,    $code,   $errmsg );
     $check->($response) if defined $check;
 }
 
@@ -70,8 +73,8 @@ sub has_error {
     my ($error) = @_;
     my $func = sub {
         my ($response) = @_;
-        my $tb = Test::More->builder;
-        my $json = decode_json( $response->content );
+        my $tb         = Test::More->builder;
+        my $json       = decode_json( $response->content );
         return $tb->like( $json->{'error'}, $error );
     };
     return $func;
@@ -79,10 +82,10 @@ sub has_error {
 
 my ( $output, $response, $json, $expected, $result );
 
-my $syntax_error = has_error(qr/syntax error/);
+my $syntax_error  = has_error(qr/syntax error/);
 my $table_missing = has_error(qr/no relation "\w+" found in namespace "\w+"/);
-my $node         = PostgreSQL::Test::Cluster->new('main');
-my $port         = PostgreSQL::Test::Cluster::get_free_port();
+my $node          = PostgreSQL::Test::Cluster->new('main');
+my $port          = PostgreSQL::Test::Cluster::get_free_port();
 
 print "Using port $port for the service\n";
 
@@ -158,7 +161,8 @@ is( $result, $expected );
 
 # Check that write endpoint is handled correctly even when we have
 # unrecognized parameters in the URL.
-test_endpoint "http://localhost:$port/write?db=metrics&magic=more", <<'END', NO_CONTENT;
+test_endpoint "http://localhost:$port/write?db=metrics&m=m",
+  <<'END', NO_CONTENT;
 disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574853954000000000
 disk,mode=rw,path=/boot/efi free=527807775i,total=1000i,used_percent=1.12 1574853964000000000
 END
