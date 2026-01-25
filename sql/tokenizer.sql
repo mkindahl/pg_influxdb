@@ -14,7 +14,7 @@
 -- License along with this program.  If not, see
 -- <https://www.gnu.org/licenses/>.
 
-create extension influxdb;
+create extension if not exists influxdb;
 
 create table samples(
   sample_id serial,

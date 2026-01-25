@@ -13,8 +13,8 @@
 -- You should have received a copy of the GNU Affero General Public
 -- License along with this program.  If not, see
 -- <https://www.gnu.org/licenses/>.
-create extension influxdb;
-create schema testing;
+create extension if not exists influxdb;
+create schema if not exists testing;
 create table testing.disk(_time timestamptz, _tags jsonb, _fields jsonb);
 CALL influxdb.process_text('testing', E'disk,mode=rw,path=/boot/efi free=527806464i,inodes_free=i,total=0i,used_percent=1.4929822952022749 1574753954000000000');
 CALL influxdb.process_text('testing', E'disk,mode=0 free=527806464i,total=0i 1574753954000000000');

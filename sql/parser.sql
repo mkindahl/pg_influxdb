@@ -14,7 +14,7 @@
 -- License along with this program.  If not, see
 -- <https://www.gnu.org/licenses/>.
 
-create extension influxdb;
+create extension if not exists influxdb;
 
 select * from influxdb.parse_text('myMeasurement fieldKey=1u');
 select * from influxdb.parse_text('myMeasurement fieldKey=12485903u');
