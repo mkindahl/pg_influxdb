@@ -130,41 +130,46 @@ static bool InfluxFillValues(InfluxDataPoint* data_point, TupleDesc tupdesc,
 
   time_attnum = SPI_fnumber(tupdesc, "_time");
   if (time_attnum > 0) {
-    /* If this is not a time type, we ignore it */
+    /*
+     * If this is not a time type, we ignore it. We need to capture
+     * this as an error in some manner, but doing it here will flood
+     * the log with error messages.
+     */
     if (!is_time_type(SPI_gettypeid(tupdesc, time_attnum)))
       return false;
 
-    errno = 0;
-
-    if (InfluxTokenIsValid(data_point->timestamp)) {
-      timestamp = strtou64(data_point->timestamp.buf, &endptr, 0);
-    } else {
+    if (!InfluxTokenIsValid(data_point->timestamp)) {
       struct timeval tv;
       gettimeofday(&tv, NULL);
       timestamp = 1.0e9 * tv.tv_sec + 1.0e3 * tv.tv_usec;
+    } else {
+      errno = 0;
+      timestamp = strtou64(data_point->timestamp.buf, &endptr, 0);
+
+      if ((errno && errno != ERANGE) || endptr == data_point->timestamp.buf) {
+        if (raise_error)
+          ereport(ERROR,
+                  (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
+                   errmsg("invalid input syntax for: \"%s\"",
+                          data_point->timestamp.buf)));
+        else
+          return false;
+      }
+
+      if (errno == ERANGE) {
+        if (raise_error)
+          ereport(ERROR,
+                  errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+                  errmsg("value \"%s\" is out of range for timestamp",
+                         data_point->timestamp.buf));
+        else
+          return false;
+      }
     }
 
-    if ((errno && errno != ERANGE) || endptr == data_point->timestamp.buf) {
-      if (raise_error)
-        ereport(ERROR,
-                (errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-                 errmsg("invalid input syntax for: \"%s\"",
-                        data_point->timestamp.buf)));
-      else
-        return false;
-    }
-
-    if (errno == ERANGE) {
-      if (raise_error)
-        ereport(ERROR,
-                errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-                errmsg("value \"%s\" is out of range for timestamp",
-                       data_point->timestamp.buf));
-      else
-        return false;
-    }
-
-    /* PostgreSQL timestamp are in microseconds since PostgreSQL epoch
+    /*
+     * PostgreSQL timestamp are in microseconds since PostgreSQL
+     * epoch, so correct the timestamp from UNIX timestamp.
      */
     timestamp /= 1000;
     timestamp -= USECS_PER_SEC *
