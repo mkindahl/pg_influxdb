@@ -69,25 +69,9 @@ typedef struct InfluxHttpRequestData {
 
 static void HttpWorkerInsertMeasurements(Oid nspid, const char* buf,
                                          size_t buflen) {
-  int err;
-
-  SetCurrentStatementStartTimestamp();
-  StartTransactionCommand();
-
-  if ((err = SPI_connect()) != SPI_OK_CONNECT)
-    elog(ERROR, "SPI_connect failed: %s", SPI_result_code_string(err));
-
-  PushActiveSnapshot(GetTransactionSnapshot());
-
   pgstat_report_activity(STATE_RUNNING, "processing lines");
 
   process_text_internal(nspid, (char*)buf, buflen);
-
-  if ((err = SPI_finish()) != SPI_OK_FINISH)
-    elog(ERROR, "SPI_finish failed: %s", SPI_result_code_string(err));
-
-  PopActiveSnapshot();
-  CommitTransactionCommand();
 
   pgstat_report_activity(STATE_IDLE, NULL);
 }
@@ -435,6 +419,7 @@ void InfluxHttpWorkerAcceptConnection(InfluxHttpWorkerState* state) {
 void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int client_fd) {
   MemoryContext oldcontext = CurrentMemoryContext;
   ResourceOwner oldowner = CurrentResourceOwner;
+  int err;
 
   pgstat_report_activity(STATE_RUNNING, "processing data");
 
@@ -478,6 +463,14 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int client_fd) {
         break;
       }
 
+      SetCurrentStatementStartTimestamp();
+      StartTransactionCommand();
+
+      if ((err = SPI_connect()) != SPI_OK_CONNECT)
+        elog(ERROR, "SPI_connect failed: %s", SPI_result_code_string(err));
+
+      PushActiveSnapshot(GetTransactionSnapshot());
+
       parsed =
           http_parser_execute(&entry->parser, &entry->settings, buffer, len);
 
@@ -486,6 +479,13 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int client_fd) {
            parsed,
            len,
            entry->parser.status_code);
+
+      /* We don't need the SPI any more */
+      if ((err = SPI_finish()) != SPI_OK_FINISH)
+        elog(ERROR, "SPI_finish failed: %s", SPI_result_code_string(err));
+
+      PopActiveSnapshot();
+      CommitTransactionCommand();
 
       if (entry->parser.status_code > 0) {
         JsonbParseState* jbstate = NULL;
