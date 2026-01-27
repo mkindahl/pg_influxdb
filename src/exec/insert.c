@@ -187,7 +187,7 @@ static bool InfluxFillValues(InfluxDataPoint* data_point, TupleDesc tupdesc,
     if (SPI_gettypeid(tupdesc, tags_attnum) != JSONBOID)
       return false;
     values[tags_attnum - 1] =
-        JsonbPGetDatum(InfluxBuildJsonObject(data_point->tags));
+        JsonbPGetDatum(InfluxPairsGetJsonbObject(data_point->tags));
     cnulls[tags_attnum - 1] = ' ';
   }
 
@@ -196,7 +196,7 @@ static bool InfluxFillValues(InfluxDataPoint* data_point, TupleDesc tupdesc,
     if (SPI_gettypeid(tupdesc, tags_attnum) != JSONBOID)
       return false;
     values[fields_attnum - 1] =
-        JsonbPGetDatum(InfluxBuildJsonObject(data_point->fields));
+        JsonbPGetDatum(InfluxPairsGetJsonbObject(data_point->fields));
     cnulls[fields_attnum - 1] = ' ';
   }
 

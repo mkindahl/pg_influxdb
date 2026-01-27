@@ -55,4 +55,4 @@ influxdb.o: src/influxdb.c src/influxdb.h src/config.h src/exec/insert.h \
  src/proto/parser.h src/http/worker.h src/http/http_parser.h \
  src/proto/parser.h
 network.o: src/network.c src/network.h
-utils.o: src/utils.c src/utils.h src/proto/parser.h
+utils.o: src/utils.c src/utils.h

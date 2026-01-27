@@ -24,16 +24,14 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
-typedef int network_setup(int, const struct sockaddr*, socklen_t);
-
-static inline int set_nonblocking(int fd) {
+static inline int InfluxNetworkSetNonblocking(int fd) {
   int flags = fcntl(fd, F_GETFL, 0);
   if (flags == -1)
     return -1;
   return fcntl(fd, F_SETFL, flags | O_NONBLOCK);
 }
 
-int network_listener_create(const char* service, struct sockaddr* addr,
-                            socklen_t* addrlen);
+int InfluxNetworkListenerCreate(const char* service, struct sockaddr* addr,
+                                socklen_t* addrlen);
 
 #endif /* NETWORK_H_ */

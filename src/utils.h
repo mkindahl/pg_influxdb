@@ -24,8 +24,6 @@
 #include <nodes/pg_list.h>
 #include <utils/jsonb.h>
 
-extern Jsonb* InfluxBuildJsonObject(List* items);
-extern JsonbValue* InfluxJsonbAddPairs(JsonbParseState** state, List* items);
 extern void InfluxJsonbAddKeyValue(JsonbParseState** state, const char* key,
                                    const char* value);
 extern Jsonb* InfluxErrorDataGetJsonb(ErrorData* edata);
