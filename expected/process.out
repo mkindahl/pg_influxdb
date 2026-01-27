@@ -147,10 +147,31 @@ select level, free, _tags, _fields from testing.more_magic order by level;
      4 |     23456 | {"path": 1} | {"total": 4711}
 (5 rows)
 
-drop schema testing cascade;
+-- Test the keep_quotes flag.
+TRUNCATE testing.disk;
+ALTER TABLE testing.disk ADD COLUMN mode text;
+CALL influxdb.process_text('testing', E'disk,mode=rw,path=/boot/efi free=123456789i,total=0i 1574754954000000000');
+CALL influxdb.process_text('testing', E'disk,mode="rw",path="/boot/efi" free=123456789i,total=0i 1574754955000000000');
+CALL influxdb.process_text('testing', $$disk,mode='rw',path='/boot/efi' free=123456789i,total=0i 1574754956000000000$$);
+SET influxdb.keep_quotes TO on;
+CALL influxdb.process_text('testing', E'disk,mode=rw,path=/boot/efi free=123456789i,total=0i 1574755954000000000');
+CALL influxdb.process_text('testing', E'disk,mode="rw",path="/boot/efi" free=123456789i,total=0i 1574755955000000000');
+CALL influxdb.process_text('testing', $$disk,mode='rw',path='/boot/efi' free=123456789i,total=0i 1574755956000000000$$);
+SELECT _time, mode, _tags FROM testing.disk ORDER BY _time;
+            _time             | mode |           _tags           
+------------------------------+------+---------------------------
+ Mon Nov 25 23:55:54 2019 PST | rw   | {"path": "/boot/efi"}
+ Mon Nov 25 23:55:55 2019 PST | rw   | {"path": "/boot/efi"}
+ Mon Nov 25 23:55:56 2019 PST | rw   | {"path": "/boot/efi"}
+ Tue Nov 26 00:12:34 2019 PST | rw   | {"path": "/boot/efi"}
+ Tue Nov 26 00:12:35 2019 PST | "rw" | {"path": "\"/boot/efi\""}
+ Tue Nov 26 00:12:36 2019 PST | 'rw' | {"path": "'/boot/efi'"}
+(6 rows)
+
+DROP SCHEMA testing CASCADE;
 NOTICE:  drop cascades to 4 other objects
 DETAIL:  drop cascades to table testing.disk
 drop cascades to table testing.magic
 drop cascades to table testing.all_types
 drop cascades to table testing.more_magic
-drop extension influxdb;
+DROP EXTENSION influxdb;
