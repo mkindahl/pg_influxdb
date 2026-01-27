@@ -29,18 +29,18 @@
 #include "http_parser.h"
 
 /*
- * Struct: HttpConnectionEntry
+ * Struct: InfluxHttpConnectionEntry
  *
  * Connection state for a single connection.
  */
-typedef struct HttpConnectionEntry {
-  int read_fd;
+typedef struct InfluxHttpConnectionEntry {
+  int read_fd; /* Key field */
   http_parser_settings settings;
   http_parser parser;
-} HttpConnectionEntry;
+} InfluxHttpConnectionEntry;
 
 /*
- * Struct: HttpWorkerState
+ * Struct: InfluxHttpWorkerState
  *
  * State for the HTTP worker.
  */
@@ -63,17 +63,19 @@ typedef struct InfluxHttpHeaderData {
 extern PGDLLEXPORT void InfluxHttpWorkerMain(Datum arg);
 
 extern void InfluxHttpWorkerInit(BackgroundWorker* worker);
+extern InfluxHttpConnectionEntry* InfluxHttpWorkerGetConnection(
+    InfluxHttpWorkerState* state, int fd);
 extern void InfluxHttpWorkerAcceptConnection(InfluxHttpWorkerState* state);
 extern void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd);
 extern void InfluxHttpWorkerInitState(InfluxHttpWorkerState* state);
 extern void InfluxHttpWorkerAddConnection(InfluxHttpWorkerState* state, int fd);
 extern void InfluxHttpWorkerDelConnection(InfluxHttpWorkerState* state, int fd);
 extern void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state,
-                                         int client_fd, int status_code,
+                                         int fd, int status_code,
                                          const InfluxHttpHeaderData field[],
                                          size_t nfields, const char* content);
 extern void InfluxHttpWorkerSendErrorResponse(InfluxHttpWorkerState* state,
-                                              int client_fd, int status_code,
+                                              int fd, int status_code,
                                               Jsonb* content);
 
 #endif /* HTTP_WORKER_H_ */
