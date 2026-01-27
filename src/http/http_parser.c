@@ -377,9 +377,7 @@ static const uint8_t normal_url_char[32] = {
 #undef T
 
 enum state {
-  s_dead = 1 /* important that this is > 0 */
-
-  ,
+  s_dead = 1, /* important that this is > 0 */
   s_start_req_or_res,
   s_res_or_resp_H,
   s_start_res,
@@ -395,12 +393,8 @@ enum state {
   s_res_status_code,
   s_res_status_start,
   s_res_status,
-  s_res_line_almost_done
-
-  ,
-  s_start_req
-
-  ,
+  s_res_line_almost_done,
+  s_start_req,
   s_req_method,
   s_req_spaces_before_url,
   s_req_schema,
@@ -425,9 +419,7 @@ enum state {
   s_req_http_dot,
   s_req_http_minor,
   s_req_http_end,
-  s_req_line_almost_done
-
-  ,
+  s_req_line_almost_done,
   s_header_field_start,
   s_header_field,
   s_header_value_discard_ws,
@@ -435,37 +427,23 @@ enum state {
   s_header_value_discard_lws,
   s_header_value_start,
   s_header_value,
-  s_header_value_lws
-
-  ,
-  s_header_almost_done
-
-  ,
+  s_header_value_lws,
+  s_header_almost_done,
   s_chunk_size_start,
   s_chunk_size,
   s_chunk_parameters,
-  s_chunk_size_almost_done
-
-  ,
+  s_chunk_size_almost_done,
   s_headers_almost_done,
-  s_headers_done
-
   /* Important: 's_headers_done' must be the last 'header' state. All
    * states beyond this must be 'body' states. It is used for overflow
-   * checking. See the PARSING_HEADER() macro.
-   */
-
-  ,
+   * checking. See the PARSING_HEADER() macro. */
+  s_headers_done,
   s_chunk_data,
   s_chunk_data_almost_done,
-  s_chunk_data_done
-
-  ,
+  s_chunk_data_done,
   s_body_identity,
-  s_body_identity_eof
-
-  ,
-  s_message_done
+  s_body_identity_eof,
+  s_message_done,
 };
 
 #define PARSING_HEADER(state) (state <= s_headers_done)

@@ -264,16 +264,14 @@ void InfluxHttpWorkerSendErrorResponse(InfluxHttpWorkerState* state, int fd,
   InfluxHttpWorkerDelConnection(state, fd);
 }
 
-HttpConnectionEntry* InfluxHttpWorkerDelConnection(InfluxHttpWorkerState* state,
-                                                   int fd) {
-  HttpConnectionEntry* entry;
+void InfluxHttpWorkerDelConnection(InfluxHttpWorkerState* state, int fd) {
   elog(DEBUG1,
        "%s: removing file descriptor %d from epoll set %d",
        __func__,
        fd,
        state->epoll_fd);
 
-  entry = hash_search(state->http_connection_hash, &fd, HASH_REMOVE, NULL);
+  hash_search(state->http_connection_hash, &fd, HASH_REMOVE, NULL);
 
   if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, fd, NULL) == -1)
     ereport(ERROR,
@@ -284,8 +282,6 @@ HttpConnectionEntry* InfluxHttpWorkerDelConnection(InfluxHttpWorkerState* state,
 
   shutdown(fd, SHUT_RDWR);
   close(fd);
-
-  return entry;
 }
 
 static void extend_epoll_set(InfluxHttpWorkerState* state, int fd) {
@@ -307,8 +303,7 @@ static void extend_epoll_set(InfluxHttpWorkerState* state, int fd) {
                    state->epoll_fd));
 }
 
-HttpConnectionEntry* InfluxHttpWorkerAddConnection(InfluxHttpWorkerState* state,
-                                                   int fd) {
+void InfluxHttpWorkerAddConnection(InfluxHttpWorkerState* state, int fd) {
   HttpConnectionEntry* entry;
   bool found;
 
@@ -330,7 +325,6 @@ HttpConnectionEntry* InfluxHttpWorkerAddConnection(InfluxHttpWorkerState* state,
   entry->settings.on_body = on_body;
   http_parser_init(&entry->parser, HTTP_REQUEST);
   entry->parser.data = palloc0(sizeof(InfluxHttpRequestData));
-  return entry;
 }
 
 void InfluxHttpWorkerInitState(InfluxHttpWorkerState* state) {
@@ -361,7 +355,7 @@ void InfluxHttpWorkerInitState(InfluxHttpWorkerState* state) {
   elog(LOG, "InfluxDB HTTP Worker listening on port %d", addr.sin_port);
 }
 
-static HttpConnectionEntry* http_worker_get_connection(
+static HttpConnectionEntry* InfluxHttpWorkerGetConnection(
     InfluxHttpWorkerState* state, int key) {
   if (state->http_connection_hash == NULL) {
     HASHCTL ctl = {.keysize = sizeof(int),
@@ -409,14 +403,19 @@ void InfluxHttpWorkerAcceptConnection(InfluxHttpWorkerState* state) {
 }
 
 /*
- * Function: influxdb_http_worker_process_data
+ * Function: InfluxdbHttpWorkerProcessData
  *
  * Process received data by feeding it into the associated parser.
+ *
+ * Processing data proceeds by reading data from the client file
+ * descriptor and appending it to the client part of the state.
+ *
+ * Once no more data is received, the request is parsed and processed.
  *
  * If the parser fails, it will send an error message back, shut down
  * the parser, and close the connection.
  */
-void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int client_fd) {
+void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
   MemoryContext oldcontext = CurrentMemoryContext;
   ResourceOwner oldowner = CurrentResourceOwner;
   int err;
@@ -425,104 +424,105 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int client_fd) {
 
   PG_TRY();
   {
+    StringInfoData request;
+    HttpConnectionEntry* entry;
+    ssize_t parsed, len;
+    char buffer[BUFFER_SIZE] = {0};
+    InfluxHttpHeaderData fields[] = {
+        {"Connection", "close"},
+    };
+
+    initStringInfo(&request);
+
+    /* Read data info a buffer */
     while (1) {
-      char buffer[BUFFER_SIZE] = {0};
-      ssize_t parsed, len;
-      HttpConnectionEntry* entry;
-
       /* Not a datagram channel so recv and read are equivalent */
-      len = read(client_fd, buffer, BUFFER_SIZE - 1);
+      len = read(fd, buffer, BUFFER_SIZE);
 
-      elog(DEBUG1, "received %ld bytes on %d:\n%s", len, client_fd, buffer);
+      elog(DEBUG1, "received %ld bytes on %d:\n%s", len, fd, buffer);
 
-      /* If all data is processed, we just send a response and return */
-      if (len == 0 ||
-          (len == -1 && (errno == EAGAIN || errno == EWOULDBLOCK))) {
-        InfluxHttpHeaderData fields[] = {
-            {"Connection", "close"},
-        };
-
-        InfluxHttpWorkerSendResponse(state,
-                                     client_fd,
-                                     204,
-                                     fields,
-                                     sizeof(fields) / sizeof(*fields),
-                                     NULL);
-        InfluxHttpWorkerDelConnection(state, client_fd);
+      /* If connection is shut down, we do not need to send a response. */
+      if (len == 0)
         return;
-      }
-
+      /* If read data into the buffer, append it to the data to be read */
+      else if (len > 0)
+        appendBinaryStringInfo(&request, buffer, len);
+      /* If there are no more data, we start processing data */
+      else if (len == -1 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        break;
       /* If we had an error, send a respose and close connection */
-      if (len == -1)
+      else if (len == -1)
         ereport(
             ERROR, errcode_for_socket_access(), errmsg("recv call failed: %m"));
+    }
 
-      entry = http_worker_get_connection(state, client_fd);
-      if (entry == NULL) {
-        elog(LOG, "entry for file descriptor %d not found", client_fd);
-        break;
-      }
+    /* Once all data is read, we process it it and send a response. */
 
-      SetCurrentStatementStartTimestamp();
-      StartTransactionCommand();
+    entry = InfluxHttpWorkerGetConnection(state, fd);
+    if (entry == NULL) {
+      elog(LOG, "entry for file descriptor %d not found", fd);
+      break;
+    }
 
-      if ((err = SPI_connect()) != SPI_OK_CONNECT)
-        elog(ERROR, "SPI_connect failed: %s", SPI_result_code_string(err));
+    SetCurrentStatementStartTimestamp();
+    StartTransactionCommand();
 
-      PushActiveSnapshot(GetTransactionSnapshot());
+    if ((err = SPI_connect()) != SPI_OK_CONNECT)
+      elog(ERROR, "SPI_connect failed: %s", SPI_result_code_string(err));
 
-      parsed =
-          http_parser_execute(&entry->parser, &entry->settings, buffer, len);
+    PushActiveSnapshot(GetTransactionSnapshot());
 
-      elog(DEBUG1,
-           "parsed %ld bytes of %ld, status_code: %d",
-           parsed,
-           len,
-           entry->parser.status_code);
+    parsed = http_parser_execute(
+        &entry->parser, &entry->settings, request.data, request.len);
 
-      /* We don't need the SPI any more */
-      if ((err = SPI_finish()) != SPI_OK_FINISH)
-        elog(ERROR, "SPI_finish failed: %s", SPI_result_code_string(err));
+    /* We don't need the SPI any more */
+    if ((err = SPI_finish()) != SPI_OK_FINISH)
+      elog(ERROR, "SPI_finish failed: %s", SPI_result_code_string(err));
 
-      PopActiveSnapshot();
-      CommitTransactionCommand();
+    PopActiveSnapshot();
+    CommitTransactionCommand();
 
-      if (entry->parser.status_code > 0) {
-        JsonbParseState* jbstate = NULL;
-        JsonbValue* result;
+    elog(DEBUG1,
+         "parsed %ld bytes of %d, status_code: %d",
+         parsed,
+         request.len,
+         entry->parser.status_code);
 
-        (void)pushJsonbValue(&jbstate, WJB_BEGIN_OBJECT, NULL);
+    if (entry->parser.status_code > 0) {
+      JsonbParseState* jbstate = NULL;
+      JsonbValue* result;
 
-        InfluxJsonbAddKeyValue(&jbstate, "error", "endpoint does not exist");
+      (void)pushJsonbValue(&jbstate, WJB_BEGIN_OBJECT, NULL);
 
-        result = pushJsonbValue(&jbstate, WJB_END_OBJECT, NULL);
+      InfluxJsonbAddKeyValue(&jbstate, "error", "endpoint does not exist");
 
-        InfluxHttpWorkerSendErrorResponse(state,
-                                          client_fd,
-                                          entry->parser.status_code,
-                                          JsonbValueToJsonb(result));
-        break;
-      } else if (parsed != len) {
-        JsonbParseState* jbstate = NULL;
-        JsonbValue* result;
+      result = pushJsonbValue(&jbstate, WJB_END_OBJECT, NULL);
 
-        (void)pushJsonbValue(&jbstate, WJB_BEGIN_OBJECT, NULL);
+      InfluxHttpWorkerSendErrorResponse(
+          state, fd, entry->parser.status_code, JsonbValueToJsonb(result));
+    } else if (parsed != request.len) {
+      JsonbParseState* jbstate = NULL;
+      JsonbValue* result;
 
-        InfluxJsonbAddKeyValue(
-            &jbstate,
-            "error",
-            http_errno_name(HTTP_PARSER_ERRNO(&entry->parser)));
-        InfluxJsonbAddKeyValue(
-            &jbstate,
-            "detail",
-            http_errno_description(HTTP_PARSER_ERRNO(&entry->parser)));
+      (void)pushJsonbValue(&jbstate, WJB_BEGIN_OBJECT, NULL);
 
-        result = pushJsonbValue(&jbstate, WJB_END_OBJECT, NULL);
+      InfluxJsonbAddKeyValue(
+          &jbstate,
+          "error",
+          http_errno_name(HTTP_PARSER_ERRNO(&entry->parser)));
+      InfluxJsonbAddKeyValue(
+          &jbstate,
+          "detail",
+          http_errno_description(HTTP_PARSER_ERRNO(&entry->parser)));
 
-        InfluxHttpWorkerSendErrorResponse(
-            state, client_fd, 400, JsonbValueToJsonb(result));
-        break;
-      }
+      result = pushJsonbValue(&jbstate, WJB_END_OBJECT, NULL);
+
+      InfluxHttpWorkerSendErrorResponse(
+          state, fd, 400, JsonbValueToJsonb(result));
+    } else {
+      InfluxHttpWorkerSendResponse(
+          state, fd, 204, fields, sizeof(fields) / sizeof(*fields), NULL);
+      InfluxHttpWorkerDelConnection(state, fd);
     }
   }
   PG_CATCH();
@@ -547,7 +547,7 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int client_fd) {
     CurrentResourceOwner = oldowner;
 
     edata_jb = InfluxErrorDataGetJsonb(edata);
-    InfluxHttpWorkerSendErrorResponse(state, client_fd, 400, edata_jb);
+    InfluxHttpWorkerSendErrorResponse(state, fd, 400, edata_jb);
   }
   PG_END_TRY();
 }
