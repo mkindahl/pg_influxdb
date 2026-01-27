@@ -47,6 +47,7 @@
 #include <sys/socket.h>
 
 #include "config.h"
+#include "exec/insert.h"
 #include "http_parser.h"
 #include "influxdb.h"
 #include "network.h"
@@ -92,8 +93,6 @@ static void parse_write_params(InfluxHttpRequestData* data, const char* start) {
   const char* key = start + 1;
   const char* val = NULL;
   const char* ptr;
-
-  elog(LOG, "%s: %s", __func__, start);
 
   /* If it doesn't start with a '?', there are no parameters */
   if (*start != '?')
@@ -175,8 +174,8 @@ static const char* InfluxHttpStatusMessage(int status_code) {
  * that by remembering the value in the request header and using it
  * here.
  */
-void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state,
-                                  int client_fd, int status_code,
+void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state, int fd,
+                                  int status_code,
                                   const InfluxHttpHeaderData field[],
                                   size_t nfields, const char* body) {
   ssize_t sent;
@@ -226,7 +225,7 @@ void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state,
 
   elog(DEBUG1, "sending response:\n%s", response.data);
 
-  sent = write(client_fd, response.data, response.len);
+  sent = write(fd, response.data, response.len);
   if (sent != response.len)
     ereport(LOG,
             errcode_for_socket_access(),
@@ -271,6 +270,8 @@ void InfluxHttpWorkerDelConnection(InfluxHttpWorkerState* state, int fd) {
        fd,
        state->epoll_fd);
 
+  Assert(state->http_connection_hash != NULL);
+
   hash_search(state->http_connection_hash, &fd, HASH_REMOVE, NULL);
 
   if (epoll_ctl(state->epoll_fd, EPOLL_CTL_DEL, fd, NULL) == -1)
@@ -303,30 +304,49 @@ static void extend_epoll_set(InfluxHttpWorkerState* state, int fd) {
                    state->epoll_fd));
 }
 
+/*
+ * Function: InfluxHttpWorkerAddConnection
+ *
+ * Add a new connection to the state and set up the necessary
+ * processing information.
+ *
+ * Parameters:
+ *
+ *    state - InfluxDB HTTP worker state
+ *    fd - file descriptor for connection where data is read
+ */
 void InfluxHttpWorkerAddConnection(InfluxHttpWorkerState* state, int fd) {
-  HttpConnectionEntry* entry;
+  InfluxHttpConnectionEntry* entry;
   bool found;
 
   extend_epoll_set(state, fd);
 
   if (state->http_connection_hash == NULL) {
-    HASHCTL ctl = {.keysize = sizeof(int),
-                   .entrysize = sizeof(HttpConnectionEntry)};
+    HASHCTL ctl = {
+        .keysize = sizeof(int),
+        .entrysize = sizeof(InfluxHttpConnectionEntry),
+    };
     state->http_connection_hash =
         hash_create("http_connections", 8, &ctl, HASH_ELEM | HASH_BLOBS);
   }
 
   entry = hash_search(state->http_connection_hash, &fd, HASH_ENTER, &found);
-  if (found)
+  if (found) {
     elog(WARNING, "adding connection %d a second time, not changing state", fd);
-
-  memset(&entry->settings, 0, sizeof(entry->settings));
-  entry->settings.on_url = on_url;
-  entry->settings.on_body = on_body;
-  http_parser_init(&entry->parser, HTTP_REQUEST);
-  entry->parser.data = palloc0(sizeof(InfluxHttpRequestData));
+  } else {
+    memset(&entry->settings, 0, sizeof(entry->settings));
+    entry->settings.on_url = on_url;
+    entry->settings.on_body = on_body;
+    http_parser_init(&entry->parser, HTTP_REQUEST);
+    entry->parser.data = palloc0(sizeof(InfluxHttpRequestData));
+  }
 }
 
+/*
+ * Function: InfluxHttpWorkerInitState
+ *
+ * Initialize the worker state.
+ */
 void InfluxHttpWorkerInitState(InfluxHttpWorkerState* state) {
   struct sockaddr_in addr;
   socklen_t addrlen = sizeof(addr);
@@ -343,7 +363,7 @@ void InfluxHttpWorkerInitState(InfluxHttpWorkerState* state) {
             errmsg("could not create epoll socket: %m"));
 
   /* Set up listen socket */
-  state->listen_fd = network_listener_create(
+  state->listen_fd = InfluxNetworkListenerCreate(
       influxdb_http_service, (struct sockaddr*)&addr, &addrlen);
   if (state->listen_fd == -1)
     ereport(ERROR,
@@ -355,16 +375,12 @@ void InfluxHttpWorkerInitState(InfluxHttpWorkerState* state) {
   elog(LOG, "InfluxDB HTTP Worker listening on port %d", addr.sin_port);
 }
 
-static HttpConnectionEntry* InfluxHttpWorkerGetConnection(
-    InfluxHttpWorkerState* state, int key) {
-  if (state->http_connection_hash == NULL) {
-    HASHCTL ctl = {.keysize = sizeof(int),
-                   .entrysize = sizeof(HttpConnectionEntry)};
-    state->http_connection_hash =
-        hash_create("http_connections", 8, &ctl, HASH_ELEM | HASH_BLOBS);
-  }
-
-  return hash_search(state->http_connection_hash, &key, HASH_FIND, NULL);
+InfluxHttpConnectionEntry* InfluxHttpWorkerGetConnection(
+    InfluxHttpWorkerState* state, int fd) {
+  if (state->http_connection_hash == NULL)
+    return NULL;
+  else
+    return hash_search(state->http_connection_hash, &fd, HASH_FIND, NULL);
 }
 
 void InfluxHttpWorkerAcceptConnection(InfluxHttpWorkerState* state) {
@@ -372,11 +388,11 @@ void InfluxHttpWorkerAcceptConnection(InfluxHttpWorkerState* state) {
   while (1) {
     struct sockaddr_in addr;
     socklen_t addrlen = sizeof(addr);
-    int client_fd;
+    int fd;
     char addr_text[INET_ADDRSTRLEN];
 
-    client_fd = accept(state->listen_fd, (struct sockaddr*)&addr, &addrlen);
-    if (client_fd == -1) {
+    fd = accept(state->listen_fd, (struct sockaddr*)&addr, &addrlen);
+    if (fd == -1) {
       if (errno == EAGAIN || errno == EWOULDBLOCK) {
         break;
       } else {
@@ -390,15 +406,15 @@ void InfluxHttpWorkerAcceptConnection(InfluxHttpWorkerState* state) {
     inet_ntop(AF_INET, &addr.sin_addr, addr_text, sizeof(addr_text));
     elog(LOG, "accepted connection from %s", addr_text);
 
-    if (set_nonblocking(client_fd) == -1) {
+    if (InfluxNetworkSetNonblocking(fd) == -1) {
       ereport(LOG,
               errcode_for_socket_access(),
               errmsg("failed to set socket to non-blocking: %m"));
-      close(client_fd);
+      close(fd);
       continue;
     }
 
-    InfluxHttpWorkerAddConnection(state, client_fd);
+    InfluxHttpWorkerAddConnection(state, fd);
   }
 }
 
@@ -425,7 +441,7 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
   PG_TRY();
   {
     StringInfoData request;
-    HttpConnectionEntry* entry;
+    InfluxHttpConnectionEntry* entry;
     ssize_t parsed, len;
     char buffer[BUFFER_SIZE] = {0};
     InfluxHttpHeaderData fields[] = {
@@ -580,16 +596,12 @@ void InfluxHttpWorkerMain(Datum arg) {
 
   CurrentResourceOwner = resowner;
 
-  elog(LOG, "%s: CurrentResourceOwner=%p", __func__, CurrentResourceOwner);
-
   pgstat_report_activity(STATE_RUNNING, "initializing worker state");
 
   InfluxHttpWorkerInitState(&state);
 
   while (!ShutdownRequestPending) {
     int nfds;
-
-    elog(LOG, "%s: CurrentResourceOwner=%p", __func__, CurrentResourceOwner);
 
     CHECK_FOR_INTERRUPTS();
 

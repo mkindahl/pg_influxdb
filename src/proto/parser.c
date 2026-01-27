@@ -1,4 +1,4 @@
-/**
+/*
  * Recursive decent parser for InfluxDB Line Protocol (ILP).
  *
  * <measurement>[,<tag_key>=<tag_value>[,<tag_key>=<tag_value>]]
@@ -15,9 +15,11 @@
 #include <port.h>
 #include <utils/builtins.h>
 #include <utils/elog.h>
+#include <utils/errcodes.h>
 #include <utils/jsonb.h>
 #include <utils/palloc.h>
 
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -117,9 +119,7 @@ static InfluxToken ParseTags(InfluxParseState* state,
     InfluxPair* tag = palloc(sizeof(*tag));
 
     ParseKeyValue(state, &tag->key, &tag->val);
-
     data_point->tags = lappend(data_point->tags, tag);
-
     next = InfluxNextToken(state);
 
     if (next.kind == TOKEN_KIND_BLANK)
@@ -139,9 +139,7 @@ static InfluxToken ParseFields(InfluxParseState* state,
     InfluxPair* field = palloc(sizeof(*field));
 
     ParseKeyValue(state, &field->key, &field->val);
-
     data_point->fields = lappend(data_point->fields, field);
-
     next = InfluxNextToken(state);
 
     if (next.kind == TOKEN_KIND_BLANK || next.kind == TOKEN_KIND_END_OF_INPUT ||
@@ -149,12 +147,7 @@ static InfluxToken ParseFields(InfluxParseState* state,
       break;
 
     if (next.kind != ',')
-      ereport(ERROR,
-              errcode(ERRCODE_SYNTAX_ERROR),
-              errmsg("syntax error"),
-              errdetail("Expected \",\" or blank, saw %s '%s'",
-                        KindName(next.kind),
-                        next.buf));
+      SYNTAX_ERROR("',' or blank", &next);
   }
 
   return next;
@@ -325,6 +318,35 @@ Jsonb* InfluxDataPointGetJsonB(InfluxDataPoint* data_point) {
   res = pushJsonbValue(&state, WJB_END_OBJECT, NULL);
 
   return JsonbValueToJsonb(res);
+}
+
+JsonbValue* InfluxJsonbAddPairs(JsonbParseState** state, List* items) {
+  JsonbValue jb_key, jb_val;
+  ListCell* cell;
+
+  (void)pushJsonbValue(state, WJB_BEGIN_OBJECT, NULL);
+
+  foreach (cell, items) {
+    InfluxPair* pair = (InfluxPair*)lfirst(cell);
+    StringInfo key = InfluxTokenGetString(&pair->key);
+
+    jb_key.type = jbvString;
+    jb_key.val.string.val = key->data;
+    jb_key.val.string.len = key->len;
+
+    pushJsonbValue(state, WJB_KEY, &jb_key);
+
+    jb_val = InfluxTokenGetJsonbValue(&pair->val);
+
+    pushJsonbValue(state, WJB_VALUE, &jb_val);
+  }
+
+  return pushJsonbValue(state, WJB_END_OBJECT, NULL);
+}
+
+Jsonb* InfluxPairsGetJsonbObject(List* items) {
+  JsonbParseState* state = NULL;
+  return JsonbValueToJsonb(InfluxJsonbAddPairs(&state, items));
 }
 
 Datum parse_text(PG_FUNCTION_ARGS) {

@@ -43,8 +43,8 @@
     }                                                                       \
   } while (0)
 
-int network_listener_create(const char *service, struct sockaddr *addr_out,
-                            socklen_t *addrlen) {
+int InfluxNetworkListenerCreate(const char *service, struct sockaddr *addr_out,
+                                socklen_t *addrlen) {
   int yes = 1;
   int err;
   int fd = -1;
@@ -91,7 +91,7 @@ int network_listener_create(const char *service, struct sockaddr *addr_out,
             (errcode_for_socket_access(),
              errmsg("could not listen on socket: %m")));
 
-  if (set_nonblocking(fd) == -1)
+  if (InfluxNetworkSetNonblocking(fd) == -1)
     ereport(ERROR,
             (errcode_for_socket_access(),
              errmsg("could not set socket non-blocking: %m")));

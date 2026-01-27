@@ -50,9 +50,8 @@ http_parser.o: src/http/http_parser.c src/http/http_parser.h
 plans.o: src/exec/plans.c src/exec/plans.h
 table.o: src/exec/table.c src/exec/table.h src/proto/parser.h
 insert.o: src/exec/insert.c src/exec/insert.h src/proto/parser.h \
- src/influxdb.h src/exec/plans.h src/exec/table.h src/utils.h
-influxdb.o: src/influxdb.c src/influxdb.h src/config.h src/exec/insert.h \
- src/proto/parser.h src/http/worker.h src/http/http_parser.h \
- src/proto/parser.h
+ src/influxdb.h src/exec/plans.h src/exec/table.h
+influxdb.o: src/influxdb.c src/influxdb.h src/config.h src/http/worker.h \
+ src/http/http_parser.h
 network.o: src/network.c src/network.h
-utils.o: src/utils.c src/utils.h src/proto/parser.h
+utils.o: src/utils.c src/utils.h
