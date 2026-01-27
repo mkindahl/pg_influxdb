@@ -75,5 +75,21 @@ CALL influxdb.process_text('testing', E'more_magic,level=4,path=1i free=23456i,t
 -- that it does not crash.
 select level, free, _tags, _fields from testing.more_magic order by level;
 
-drop schema testing cascade;
-drop extension influxdb;
+-- Test the keep_quotes flag.
+TRUNCATE testing.disk;
+ALTER TABLE testing.disk ADD COLUMN mode text;
+
+CALL influxdb.process_text('testing', E'disk,mode=rw,path=/boot/efi free=123456789i,total=0i 1574754954000000000');
+CALL influxdb.process_text('testing', E'disk,mode="rw",path="/boot/efi" free=123456789i,total=0i 1574754955000000000');
+CALL influxdb.process_text('testing', $$disk,mode='rw',path='/boot/efi' free=123456789i,total=0i 1574754956000000000$$);
+
+SET influxdb.keep_quotes TO on;
+
+CALL influxdb.process_text('testing', E'disk,mode=rw,path=/boot/efi free=123456789i,total=0i 1574755954000000000');
+CALL influxdb.process_text('testing', E'disk,mode="rw",path="/boot/efi" free=123456789i,total=0i 1574755955000000000');
+CALL influxdb.process_text('testing', $$disk,mode='rw',path='/boot/efi' free=123456789i,total=0i 1574755956000000000$$);
+
+SELECT _time, mode, _tags FROM testing.disk ORDER BY _time;
+
+DROP SCHEMA testing CASCADE;
+DROP EXTENSION influxdb;
