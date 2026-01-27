@@ -60,8 +60,9 @@ sub test_endpoint {
     my $response = HTTP::Response->parse($output);
     my $tb       = Test::More->builder;
     my @headers  = ( 'Date', 'Connection' );
-    my $json     = decode_json( $response->content )  if $response->content;
-    my $errmsg   = "generated error '" . $json->{'error'} . "'" if $response->content;
+    my $json     = decode_json( $response->content ) if $response->content;
+    my $errmsg   = "generated error '" . $json->{'error'} . "'"
+      if $response->content;
 
     $tb->ok( all { $response->header($_) } @headers );
     $tb->is_eq( $response->message, $reason, $errmsg );
@@ -181,6 +182,24 @@ $expected = trim(<<'END_OF_TEXT');
 END_OF_TEXT
 
 is( $result, $expected );
+
+# Build a very large request (larger than 8KiB, which is the limit of
+# the buffer for reading data). This will force the read to be split
+# into multiple pieces, and we expect all to be handled.
+my @lines;
+for my $cnt ( 0 .. 100 ) {
+    my $free      = 1234 * $cnt;
+    my $total     = 1024 * 1024 - $free;
+    my $timestamp = 1574853954000000000 + 1000 * $cnt;
+    push @lines,
+"disk,mode=rw,path=/boot/efi free=${free}i,total=${total}i,used_percent=1.49 $timestamp";
+}
+
+my $content = join "\n", @lines;
+print STDERR "length of contents is ", length($content) / 1024, " KiB\n";
+print STDERR $content;
+
+test_endpoint "http://localhost:$port/write?db=metrics", $content, NO_CONTENT;
 
 $node->stop;
 
