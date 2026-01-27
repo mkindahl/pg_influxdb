@@ -17,6 +17,9 @@ It also aims to have better support for the InfluxDB Line Protocol and
 be a true replacement for using InfluxDB to the extent that it is
 possible.
 
+- [InfluxDB Line Protocol](docs/line_protocol.md)
+- [InfluxDB HTTP Endpoint](docs/http_endpoint.md)
+
 ## Building and Installing
 
 Install the [PGDG PostgreSQL version][pgdg]. For example
@@ -50,135 +53,6 @@ influxdb.database = 'my_database'
 > because this is where the background workers are started. PostgreSQL
 > has support for dynamically spawning workers, but they would not
 > survive a restart so they are not supported right now.
-
-## InfluxDB Line Protocol
-
-The [InfluxDB Line Protocol][line-protocol] is a compact line-oriented
-protocol for sending measurements from devices.
-
-The following example is from the [specification page][line-protocol]:
-
-```
-myMeasurement,tag1=value1,tag2=value2 fieldKey="fieldValue" 1556813561098000000
-```
-
-It consists of a measurement name, an optional set of tags, a set of
-field values, and an optional timestamp, typically in nanoseconds
-since the epoch.
-
-## Differences from InfluxDB Line Protocol
-
-Compared to the [Influx Line Protocol Reference][line-protocol] there
-are some subtle differences in semantics, which are outlined here.
-
-### Quotes and backslashes
-
-Section [Duplicate points][duplicate] contains:
-
-> A point is uniquely identified by the measurement name, tag set, and
-> timestamp. If you submit line protocol with the same measurement,
-> tag set, and timestamp, but with a different field set, the field
-> set becomes the union of the old field set and the new field set,
-> where any conflicts favor the new field set.
-
-And [section on quotes][quotes] contains:
-
-> Line protocol accepts double and single quotes in measurement names,
-> tag keys, tag values, and field keys, but interprets them as part of
-> the name, key, or value.
-
-This means that keys `"more magic"` and `more\ magic` are considered
-different when compared.
-
-For `pg_influxdb` quotes and backslashes are not considered part of
-the string or symbol. This means that `"more magic"`, `more\ magic`,
-and `'more magic'` are considered equal as strings and as a result the
-following lines are considered duplicates according to the definition
-above.
-
-```
-my\ Measurement,"tag key1"="device" fieldKey=100 1556813561098000000
-"my Measurement",tag\ key1=device fieldKey=100 1556813561098000000
-'my Measurement','tag key1'=device fieldKey=100 1556813561098000000
-```
-
-To disable this behavior and include the quotes in the string, set
-the GUC `influxdb.keep_quotes` to `on`.
-
-### Boolean values
-
-From [section on boolean values][boolean] only the values `t`, `T`,
-`true`, `True`, `TRUE`, `f`, `F`, `false`, `False`, and `FALSE` are
-boolean. According to this definition, it means that `tRue` is not a
-boolean, but with `pg_influxdb` values `T`, `TRUE`, `F`, and `FALSE`
-in all combinations of case are considered boolean. This means that
-also `tRue` is a boolean (if not quoted).
-
-### Line endings
-
-According to the [Influx Line Protocol Reference][line-protocol] a
-timestamp can be missing, but if there is a blank at the end of the
-line, this would generate a syntax error. This is very difficult to
-spot so instead blanks are allowed at the end of the line even when
-there is no timestamp.
-
-## HTTP Endpoint
-
-The HTTP endpoint is mimicing the [InfluxDB API][influx-api], but
-right now only handles writes.
-
-### HTTP `/write` endpoint
-
-The `/write` endpoint is used to write rows to the database and it
-requires a `db` parameter to be provided with the URL signifying the
-schema that will be used for the metric table.
-
-> [!NOTE]
-> After processing a single request, the connection is immediately
-> shut down with a `Connection: close` header, regardless of what the
-> client requested. This is allowed by the HTTP standard, but it might
-> come as a suprise to the user.
-
-#### Requests
-
-The server accept `POST` requests with lines in the [InfluxDB Line
-Protocol][line-protocol] format as input. The rows are written to a table with
-the same name as the measurement and in the schema given by the `db`
-parameter.
-
-For example, to write a few metrics to the table `metrics.cpu` table,
-you can use the following `curl` command:
-
-```bash
-curl -is 'http://localhost:8086/write?db=metrics' --data-binary @- <<END_OF_INPUT
-cpu,cpu=cpu0,host=fury usage_guest=0,usage_idle=95.91 1574753954000000000
-cpu,cpu=cpu1,host=fury usage_guest=0,usage_idle=92.15 1574753954000000000
-cpu,cpu=cpu2,host=fury usage_guest=0,usage_idle=90.74 1574753954000000000
-END_OF_INPUT
-```
-
-For the requests, the `Content-Type` is currently ignored, but for
-future compatibility you should use a `Content-Type` header with
-`application/x-www-form-urlencoded`, `application/octet-stream` (which
-is the HTTP default is no content type is provided), or `text/plain`.
-
-> [!NOTE]
-> The content type `application/x-www-form-urlencoded` is supported
-> since the examples on the [InfluxDB API][influx-api] uses this with
-> the examples so it is likely to be supported also in the future.
-
-#### Responses
-
-For any responses that contains contents, the responses sent back are
-always using content type `application/json` with the content being a
-JSON object with the following fields:
-
-`error`
-: Brief error message. This is the same as provided by InfluxDB.
-
-`detail`
-: Error message details, if available. This is not available from
-  InfluxDB.
 
 ## Options
 
@@ -274,9 +148,6 @@ For all other files, the GNU Affero General Public License applies:
 [pg-influx]: https://github.com/timescale/pg_influx
 [line-protocol]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol
 [influx-api]: https://docs.influxdata.com/influxdb/v1/tools/api
-[quotes]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/#quotes
-[boolean]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/#boolean
-[duplicate]: https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/#duplicate-points
 
 
 
