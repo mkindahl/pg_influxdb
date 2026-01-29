@@ -23,7 +23,10 @@
 
 #include "proto/parser.h"
 
-void InfluxInsertDataPoint(Oid nspid, InfluxDataPoint* data_point,
-                           bool raise_error);
+extern Datum process_text(PG_FUNCTION_ARGS);
+
+extern void process_text_internal(Oid nspid, char* buf, size_t len);
+extern void InfluxInsertDataPoint(Oid nspid, InfluxDataPoint* data_point,
+                                  bool raise_error);
 
 #endif /* INFLUXDB_INSERT_H_ */

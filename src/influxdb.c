@@ -39,61 +39,17 @@
 #include <utils/rel.h>
 
 #include "config.h"
-#include "exec/insert.h"
 #include "http/worker.h"
-#include "proto/parser.h"
 
 PG_MODULE_MAGIC;
 
 void _PG_init(void);
-
-PG_FUNCTION_INFO_V1(process_text);
 
 bool influxdb_keep_quotes = false;
 bool influxdb_auto_create_table = false;
 char* influxdb_http_service = INFLUXDB_DEFAULT_HTTP_SERVICE;
 char* influxdb_database = NULL;
 int influxdb_http_workers = 4;
-
-void process_text_internal(Oid nspid, char* buf, size_t len) {
-  InfluxParseState state;
-
-  elog(DEBUG1,
-       "processing text using schema %s:\n%s",
-       get_namespace_name(nspid),
-       buf);
-
-  InfluxParseStateInit(&state, buf, len);
-
-  while (InfluxParseStateHasMore(&state)) {
-    InfluxDataPoint data_point;
-
-    InfluxParseDataPoint(&state, &data_point);
-    InfluxInsertDataPoint(nspid, &data_point, true);
-  }
-
-  InfluxParseStateFinish(&state);
-}
-
-Datum process_text(PG_FUNCTION_ARGS) {
-  Oid nspid = PG_GETARG_OID(0);
-  text* input = PG_GETARG_TEXT_PP(1);
-  int err;
-
-  if ((err = SPI_connect()) != SPI_OK_CONNECT)
-    elog(ERROR, "SPI_connect failed: %s", SPI_result_code_string(err));
-
-  PushActiveSnapshot(GetTransactionSnapshot());
-
-  process_text_internal(nspid, VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input));
-
-  if ((err = SPI_finish()) != SPI_OK_FINISH)
-    elog(ERROR, "SPI_finish failed: %s", SPI_result_code_string(err));
-
-  PopActiveSnapshot();
-
-  PG_RETURN_VOID();
-}
 
 void _PG_init(void) {
   BackgroundWorker worker;
@@ -143,8 +99,8 @@ void _PG_init(void) {
   DefineCustomStringVariable(
       "influxdb.http_service",
       "Service name or port for HTTP connections.",
-      "Service name or port number to listen for HTTP connections. If it is a "
-      "service name, it will be looked up.",
+      "Service name or port number to listen for HTTP connections. If it is a"
+      "service name, it will be looked up. Defaults to 8086. ",
       &influxdb_http_service,
       INFLUXDB_DEFAULT_HTTP_SERVICE, /* boot value */
       PGC_POSTMASTER,                /* option context */

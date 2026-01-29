@@ -24,9 +24,6 @@
 
 #include <stdbool.h>
 
-extern void process_text_internal(Oid nspid, char* buf, size_t len);
-extern Datum process_text(PG_FUNCTION_ARGS);
-
 extern bool influxdb_keep_quotes;
 extern bool influxdb_auto_create_table;
 extern char* influxdb_http_service;
