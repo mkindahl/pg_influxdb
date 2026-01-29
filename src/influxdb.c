@@ -50,6 +50,7 @@ bool influxdb_auto_create_table = false;
 char* influxdb_http_service = INFLUXDB_DEFAULT_HTTP_SERVICE;
 char* influxdb_database = NULL;
 int influxdb_http_workers = 4;
+int influxdb_http_worker_restart_time = INFLUXDB_DEFAULT_HTTP_RESTART_TIME;
 
 void _PG_init(void) {
   BackgroundWorker worker;
@@ -123,6 +124,21 @@ void _PG_init(void) {
                              NULL,           /* check hook */
                              NULL,           /* assign hook */
                              NULL);          /* show hook */
+
+  DefineCustomIntVariable(
+      "influxdb.http_worker_restart_time",
+      "Restart time for HTTP worker.",
+      "If the worker exits with an error, it will restart "
+      "after these many seconds. Providing 0 means never restart.",
+      &influxdb_http_worker_restart_time,
+      INFLUXDB_DEFAULT_HTTP_RESTART_TIME, /* boot value */
+      -1,                                 /* min value */
+      32600,                              /* max value */
+      PGC_POSTMASTER,                     /* option context */
+      0,                                  /* option flags */
+      NULL,                               /* check hook */
+      NULL,                               /* assign hook */
+      NULL);                              /* show hook */
 
   MarkGUCPrefixReserved("influxdb");
 
