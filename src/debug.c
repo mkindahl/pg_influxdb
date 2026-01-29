@@ -16,19 +16,19 @@
  * <https://www.gnu.org/licenses/>.
  */
 
-#ifndef INFLUXDB_INFLUXDB_H_
-#define INFLUXDB_INFLUXDB_H_
-
 #include <postgres.h>
-#include <fmgr.h>
 
-#include <stdbool.h>
+#include <commands/trigger.h>
+#include <funcapi.h>
 
-extern bool influxdb_keep_quotes;
-extern bool influxdb_auto_create_table;
-extern char* influxdb_http_service;
-extern char* influxdb_database;
-extern int influxdb_http_workers;
-extern int influxdb_http_worker_restart_time;
+PG_FUNCTION_INFO_V1(trigger_fatal_error);
 
-#endif /* INFLUXDB_INFLUXDB_H_ */
+Datum trigger_fatal_error(PG_FUNCTION_ARGS) {
+  TriggerData *trigdata = (TriggerData *)fcinfo->context;
+
+  elog(FATAL,
+       "FATAL error generated for table %s",
+       RelationGetRelationName(trigdata->tg_relation));
+
+  PG_RETURN_NULL();
+}

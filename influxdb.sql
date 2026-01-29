@@ -17,6 +17,13 @@
 -- complain if script is sourced in psql, rather than via CREATE EXTENSION
 \echo Use "CREATE EXTENSION influxdb" to load this file. \quit
 
-CREATE FUNCTION @extschema@.parse_text(text) RETURNS SETOF jsonb AS 'MODULE_PATHNAME' LANGUAGE C;
-CREATE FUNCTION @extschema@.tokenize(text) RETURNS TABLE(kind integer, value text) AS 'MODULE_PATHNAME' LANGUAGE C;
+CREATE FUNCTION @extschema@.parse_text(text) RETURNS SETOF jsonb
+AS 'MODULE_PATHNAME' LANGUAGE C;
+
+CREATE FUNCTION @extschema@.tokenize(text) RETURNS TABLE(kind integer, value text)
+AS 'MODULE_PATHNAME' LANGUAGE C;
+
 CREATE PROCEDURE @extschema@.process_text(regnamespace, text) AS 'MODULE_PATHNAME' LANGUAGE C;
+
+CREATE FUNCTION @extschema@.trigger_fatal_error() RETURNS TRIGGER
+AS 'MODULE_PATHNAME' LANGUAGE C;

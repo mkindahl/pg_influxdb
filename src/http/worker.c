@@ -635,7 +635,11 @@ void InfluxHttpWorkerMain(Datum arg) {
     CurrentResourceOwner = resowner;
   }
 
-  proc_exit(1);
+  /*
+   * Exiting with exit code 0 since this is a proper shutdown and should not
+   * trigger a restart.
+   */
+  proc_exit(0);
 }
 
 void InfluxHttpWorkerInit(BackgroundWorker* worker) {
@@ -648,9 +652,13 @@ void InfluxHttpWorkerInit(BackgroundWorker* worker) {
   elog(DEBUG1, "%s: initializing HTTP worker", __func__);
 
   worker->bgw_start_time = BgWorkerStart_RecoveryFinished;
-  worker->bgw_restart_time = BGW_NEVER_RESTART;
   sprintf(worker->bgw_library_name, INFLUXDB_LIBRARY_NAME);
   sprintf(worker->bgw_function_name, INFLUXDB_HTTP_FUNCTION_NAME);
   snprintf(worker->bgw_name, BGW_MAXLEN, "InfluxDB HTTP protocol worker");
   snprintf(worker->bgw_type, BGW_MAXLEN, "InfluxDB HTTP protocol worker");
+
+  if (influxdb_http_worker_restart_time > 0)
+    worker->bgw_restart_time = influxdb_http_worker_restart_time;
+  else
+    worker->bgw_restart_time = BGW_NEVER_RESTART;
 }
