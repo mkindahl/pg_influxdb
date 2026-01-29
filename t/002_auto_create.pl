@@ -1,41 +1,27 @@
+# InfluxDB API to PostgreSQL. Copyright (C) 2025 Mats Kindahl
+#
+# This program is free software: you can redistribute it and/or
+# modify it under the terms of the GNU Affero General Public License
+# as published by the Free Software Foundation, either version 3 of
+# the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful, but
+# WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public
+# License along with this program.  If not, see
+# <https://www.gnu.org/licenses/>.
+
 use strict;
 use warnings FATAL => 'all';
 
+use lib 'perl';
+
 use PostgreSQL::Test::Cluster;
 use Test::More;
-use IPC::Run;
-use HTTP::Response;
-use List::Util qw(all);
-use JSON       qw(decode_json);
-use Data::Dumper;
-
-sub trim { my $s = shift; $s =~ s/^\s+|\s+$//g; return $s; }
-
-sub curl {
-    my ( $url, $input ) = @_;
-    my ( $stdin, $stdout, $stderr );
-
-    my @cmd = (
-        "curl",          "-is", "--header", "Content-Type: text/plain",
-        "--header",      "Connection: close",
-        "--data-binary", $input, $url
-    );
-
-    IPC::Run::run \@cmd, \$stdin, \$stdout, \$stderr;
-    return $stdout;
-}
-
-sub is_response {
-    my ( $response, $code, $message ) = @_;
-    is( $response->message, $message );
-    is( $response->code,    $code );
-
-}
-
-sub has_headers {
-    my ( $response, @headers ) = @_;
-    ok( all { $response->header($_) } @headers );
-}
+use InfluxDB::Extras ':all';
 
 my ( $output, $response, $json, $expected, $result );
 
