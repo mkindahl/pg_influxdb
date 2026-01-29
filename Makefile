@@ -18,7 +18,7 @@ MODULE_big = influxdb
 OBJS_http = src/http/http_parser.o src/http/worker.o
 OBJS_proto = src/proto/tokenizer_lex.o src/proto/parser.o 
 OBJS_exec = src/exec/plans.o src/exec/insert.o src/exec/table.o
-OBJS = src/influxdb.o src/utils.o src/network.o $(OBJS_http) $(OBJS_proto) $(OBJS_exec)
+OBJS = src/influxdb.o src/utils.o src/network.o src/debug.o $(OBJS_http) $(OBJS_proto) $(OBJS_exec)
 
 VERSION_influxdb = $(shell perl -ne 'print "$$1" if /^default_version.*(\d+\.\d+)/' influxdb.control)
 

@@ -29,8 +29,7 @@ my $syntax_error  = has_error(qr/syntax error/);
 my $table_missing = has_error(qr/no relation "\w+" found in namespace "\w+"/);
 my $node          = PostgreSQL::Test::Cluster->new('main');
 my $port          = PostgreSQL::Test::Cluster::get_free_port();
-
-print "Using port $port for the service\n";
+my $schema        = "metrics";
 
 $node->init;
 $node->append_conf( 'postgresql.conf', <<"END_OF_TEXT");
@@ -42,8 +41,6 @@ influxdb.http_service = $port
 END_OF_TEXT
 
 $node->start;
-
-my $schema = "metrics";
 
 $node->safe_psql( "postgres", <<"END_OF_TEXT");
 CREATE EXTENSION influxdb;
