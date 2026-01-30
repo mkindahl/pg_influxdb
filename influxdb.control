@@ -2,5 +2,4 @@ default_version = '0.1'
 relocatable = false
 schema = influxdb
 module_pathname = '$libdir/influxdb.so'
-
-
+comment = 'InfluxDB API to PostgreSQL'

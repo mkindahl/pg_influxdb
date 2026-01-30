@@ -47,6 +47,7 @@
 #include <sys/socket.h>
 
 #include "config.h"
+#include "exec/insert.h"
 #include "http_parser.h"
 #include "influxdb.h"
 #include "network.h"
@@ -92,8 +93,6 @@ static void parse_write_params(InfluxHttpRequestData* data, const char* start) {
   const char* key = start + 1;
   const char* val = NULL;
   const char* ptr;
-
-  elog(LOG, "%s: %s", __func__, start);
 
   /* If it doesn't start with a '?', there are no parameters */
   if (*start != '?')
@@ -597,16 +596,12 @@ void InfluxHttpWorkerMain(Datum arg) {
 
   CurrentResourceOwner = resowner;
 
-  elog(LOG, "%s: CurrentResourceOwner=%p", __func__, CurrentResourceOwner);
-
   pgstat_report_activity(STATE_RUNNING, "initializing worker state");
 
   InfluxHttpWorkerInitState(&state);
 
   while (!ShutdownRequestPending) {
     int nfds;
-
-    elog(LOG, "%s: CurrentResourceOwner=%p", __func__, CurrentResourceOwner);
 
     CHECK_FOR_INTERRUPTS();
 

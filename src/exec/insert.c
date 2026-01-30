@@ -39,7 +39,8 @@
 #include "influxdb.h"
 #include "plans.h"
 #include "table.h"
-#include "utils.h"
+
+PG_FUNCTION_INFO_V1(process_text);
 
 static bool is_time_type(Oid typid) {
   switch (typid) {
@@ -258,4 +259,44 @@ void InfluxInsertDataPoint(Oid nspid, InfluxDataPoint* data_point,
   }
 
   table_close(relation, NoLock);
+}
+
+void process_text_internal(Oid nspid, char* buf, size_t len) {
+  InfluxParseState state;
+
+  elog(DEBUG1,
+       "processing text using schema %s:\n%s",
+       get_namespace_name(nspid),
+       buf);
+
+  InfluxParseStateInit(&state, buf, len);
+
+  while (InfluxParseStateHasMore(&state)) {
+    InfluxDataPoint data_point;
+
+    InfluxParseDataPoint(&state, &data_point);
+    InfluxInsertDataPoint(nspid, &data_point, true);
+  }
+
+  InfluxParseStateFinish(&state);
+}
+
+Datum process_text(PG_FUNCTION_ARGS) {
+  Oid nspid = PG_GETARG_OID(0);
+  text* input = PG_GETARG_TEXT_PP(1);
+  int err;
+
+  if ((err = SPI_connect()) != SPI_OK_CONNECT)
+    elog(ERROR, "SPI_connect failed: %s", SPI_result_code_string(err));
+
+  PushActiveSnapshot(GetTransactionSnapshot());
+
+  process_text_internal(nspid, VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input));
+
+  if ((err = SPI_finish()) != SPI_OK_FINISH)
+    elog(ERROR, "SPI_finish failed: %s", SPI_result_code_string(err));
+
+  PopActiveSnapshot();
+
+  PG_RETURN_VOID();
 }
