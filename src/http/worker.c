@@ -264,7 +264,7 @@ void InfluxHttpWorkerSendErrorResponse(InfluxHttpWorkerState* state, int fd,
 }
 
 void InfluxHttpWorkerDelConnection(InfluxHttpWorkerState* state, int fd) {
-  elog(DEBUG1,
+  elog(DEBUG2,
        "%s: removing file descriptor %d from epoll set %d",
        __func__,
        fd,
@@ -290,7 +290,7 @@ static void extend_epoll_set(InfluxHttpWorkerState* state, int fd) {
   ev.events = EPOLLIN;
   ev.data.fd = fd;
 
-  elog(DEBUG1,
+  elog(DEBUG2,
        "%s: adding file descriptor %d to epoll set %d",
        __func__,
        fd,
@@ -361,6 +361,8 @@ void InfluxHttpWorkerInitState(InfluxHttpWorkerState* state) {
     ereport(LOG,
             errcode_for_socket_access(),
             errmsg("could not create epoll socket: %m"));
+
+  elog(DEBUG2, "%s: epoll file descriptor is %d", __func__, state->epoll_fd);
 
   /* Set up listen socket */
   state->listen_fd = InfluxNetworkListenerCreate(
@@ -556,8 +558,6 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
     FlushErrorState();
 
     RESUME_INTERRUPTS();
-
-    elog(DEBUG1, "edata: level=%d, message=%s", edata->elevel, edata->message);
 
     MemoryContextSwitchTo(oldcontext);
     CurrentResourceOwner = oldowner;
