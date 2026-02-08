@@ -19,13 +19,14 @@ use warnings FATAL => 'all';
 
 use lib 'perl';
 
+use InfluxDB::Test::Cluster;
 use PostgreSQL::Test::Cluster;
 use Test::More;
 use InfluxDB::Extras ':all';
 
 my ( $output, $response, $json, $expected, $result );
 
-my $node = PostgreSQL::Test::Cluster->new('main');
+my $node = InfluxDB::Test::Cluster->new('main');
 my $port = PostgreSQL::Test::Cluster::get_free_port();
 
 print "Using port $port for the service\n";
@@ -65,7 +66,7 @@ select *
 order by _time;
 END_OF_SQL
 
-$expected = trim(<<'END_OF_TEXT');
+$expected = InfluxDB::Test::ResultSet->new(<<'END_OF_TEXT');
 2019-11-26 07:39:14|{}|{"usage": 1.2}
 2019-11-26 10:25:54|{"kind": "i836"}|{"usage": 1.6}
 END_OF_TEXT

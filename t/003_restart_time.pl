@@ -46,13 +46,13 @@ my $schema = "metrics";
 
 $node->init;
 
-# Create a configuration with a restart time of 10 seconds
+# Create a configuration with a restart time of 4 seconds
 $node->append_conf( 'postgresql.conf', <<"END_OF_TEXT");
 shared_preload_libraries = 'influxdb'
 influxdb.database = '$dbname'
 influxdb.http_workers = 1
 influxdb.http_service = $port
-influxdb.http_worker_restart_time = 5
+influxdb.http_worker_restart_time = 4
 END_OF_TEXT
 
 $node->start;
@@ -90,10 +90,10 @@ is($output, '', "empty string as expected");
 # Check that we do not have a worker
 print STDERR check_influxdb_workers($node, "postgres"), "\n";
 
-# Sleep until worker restarts
-sleep(10);
+# Sleep until worker restarts, with some margin
+sleep(8);
 
-# Check that we have a worker.
+# Check that we have a worker now.
 print STDERR check_influxdb_workers($node, "postgres"), "\n";
 
 $node->stop;
