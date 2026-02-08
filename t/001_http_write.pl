@@ -19,6 +19,7 @@ use warnings FATAL => 'all';
 
 use lib 'perl';
 
+use InfluxDB::Test::Cluster;
 use PostgreSQL::Test::Cluster;
 use Test::More;
 use InfluxDB::Extras ':all';
@@ -27,13 +28,12 @@ my ( $output, $response, $json, $expected, $result );
 
 my $syntax_error  = has_error(qr/syntax error/);
 my $table_missing = has_error(qr/no relation "\w+" found in namespace "\w+"/);
-my $node          = PostgreSQL::Test::Cluster->new('main');
+my $node          = InfluxDB::Test::Cluster->new('main');
 my $port          = PostgreSQL::Test::Cluster::get_free_port();
 my $schema        = "metrics";
 
 $node->init;
 $node->append_conf( 'postgresql.conf', <<"END_OF_TEXT");
-log_min_messages = debug1
 shared_preload_libraries = 'influxdb'
 influxdb.database = 'postgres'
 influxdb.http_workers = 2
@@ -49,63 +49,64 @@ CREATE TABLE $schema.disk(_time timestamp, mode text, free integer, _tags jsonb,
 END_OF_TEXT
 
 # Check that using the wrong endpoint will fail with an error
-test_endpoint "http://localhost:$port/writ", <<'END', NOT_FOUND;
+test_endpoint "http://localhost:$port/writ", <<'END_OF_TEXT', NOT_FOUND;
 disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574753954000000000
-END
+END_OF_TEXT
 
-test_endpoint "http://localhost:$port/writer", <<'END', NOT_FOUND;
+test_endpoint "http://localhost:$port/writer", <<'END_OF_TEXT', NOT_FOUND;
 disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574753954000000000
-END
+END_OF_TEXT
 
 # Check that we get a proper response on a syntax error
 test_endpoint "http://localhost:$port/write",
-  <<'END', BAD_REQUEST, $syntax_error;
+  <<'END_OF_TEXT', BAD_REQUEST, $syntax_error;
 cpu,usage=12 1574753954000000000
-END
+END_OF_TEXT
 
 # Check that when trying to insert into a measurement that does not
 # exist generates an error.
 test_endpoint "http://localhost:$port/write?db=$schema",
-  <<'END', BAD_REQUEST, $table_missing;
+  <<'END_OF_TEXT', BAD_REQUEST, $table_missing;
 cpu usage=1.22 1574753954000000000
-END
+END_OF_TEXT
 
 # Check that we can write data through the endpoint and get the right
 # result. Note that this involves lines that do not have a timestamp,
 # and these should be added but will have the server timestamp.
-test_endpoint "http://localhost:$port/write?db=$schema", <<'END', NO_CONTENT;
+test_endpoint "http://localhost:$port/write?db=$schema",
+  <<'END_OF_TEXT', NO_CONTENT;
 disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574753954000000000
 disk,mode=rw,path=/boot/efi free=527807775i,total=1000i,used_percent=1.12
 disk,mode=rw,path=/boot/efi free=527808830i,total=2000i,used_percent=1.11 1574753974000000000
 disk,mode=rw,path=/boot/efi free=527809294i,total=3000i,used_percent=20.3
 disk,mode=rw,path=/boot/efi free=527806464i,total=4000i,used_percent=1.49 1574753994000000000
-END
+END_OF_TEXT
 
 is( $node->safe_psql( "postgres", "select count(*) from $schema.disk" ), 5 );
 
-$result = $node->safe_psql( "postgres", <<"END" );
+$result = $node->safe_psql( "postgres", <<"END_OF_TEXT" );
 select *
   from $schema.disk
  where _time between '2019-11-26 00:00:00'
                  and '2019-11-27 00:00:00'
 order by _time;
-END
+END_OF_TEXT
 
-$expected = trim(<<'END');
+$expected = InfluxDB::Test::ResultSet->new(<<'END_OF_TEXT');
 2019-11-26 07:39:14|rw|527806464|{"path": "/boot/efi"}|{"total": 0, "used_percent": 1.49}
 2019-11-26 07:39:34|rw|527808830|{"path": "/boot/efi"}|{"total": 2000, "used_percent": 1.11}
 2019-11-26 07:39:54|rw|527806464|{"path": "/boot/efi"}|{"total": 4000, "used_percent": 1.49}
-END
+END_OF_TEXT
 
 is( $result, $expected );
 
 # Check that write endpoint is handled correctly even when we have
 # unrecognized parameters in the URL.
 test_endpoint "http://localhost:$port/write?db=metrics&m=m",
-  <<'END', NO_CONTENT;
+  <<'END_OF_TEXT', NO_CONTENT;
 disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574853954000000000
 disk,mode=rw,path=/boot/efi free=527807775i,total=1000i,used_percent=1.12 1574853964000000000
-END
+END_OF_TEXT
 
 $result = $node->safe_psql( "postgres", <<"END_OF_SQL" );
 select *
@@ -115,7 +116,7 @@ select *
 order by _time;
 END_OF_SQL
 
-$expected = trim(<<'END_OF_TEXT');
+$expected = InfluxDB::Test::ResultSet->new(<<'END_OF_TEXT');
 2019-11-27 11:25:54|rw|527806464|{"path": "/boot/efi"}|{"total": 0, "used_percent": 1.49}
 2019-11-27 11:26:04|rw|527807775|{"path": "/boot/efi"}|{"total": 1000, "used_percent": 1.12}
 END_OF_TEXT
@@ -135,8 +136,9 @@ for my $cnt ( 0 .. 100 ) {
 }
 
 my $content = join "\n", @lines;
-print STDERR "length of contents is ", length($content) / 1024, " KiB\n";
-print STDERR $content;
+
+cmp_ok( length($content), ">", 8 * 1024,
+    "length " . length($content) . " is greater than 8 KiB" );
 
 test_endpoint "http://localhost:$port/write?db=metrics", $content, NO_CONTENT;
 
