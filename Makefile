@@ -16,9 +16,10 @@
 
 MODULE_big = influxdb
 OBJS_http = src/http/http_parser.o src/http/worker.o
-OBJS_proto = src/proto/tokenizer_lex.o src/proto/parser.o 
+OBJS_udp = src/udp/worker.o
+OBJS_proto = src/proto/tokenizer_lex.o src/proto/parser.o
 OBJS_exec = src/exec/plans.o src/exec/insert.o src/exec/table.o
-OBJS = src/influxdb.o src/utils.o src/network.o src/debug.o $(OBJS_http) $(OBJS_proto) $(OBJS_exec)
+OBJS = src/influxdb.o src/utils.o src/network.o src/debug.o $(OBJS_http) $(OBJS_udp) $(OBJS_proto) $(OBJS_exec)
 
 VERSION_influxdb = $(shell perl -ne 'print "$$1" if /^default_version.*(\d+\.\d+)/' influxdb.control)
 
@@ -51,7 +52,9 @@ plans.o: src/exec/plans.c src/exec/plans.h
 table.o: src/exec/table.c src/exec/table.h src/proto/parser.h
 insert.o: src/exec/insert.c src/exec/insert.h src/proto/parser.h \
  src/influxdb.h src/exec/plans.h src/exec/table.h
+udp_worker.o: src/udp/worker.c src/udp/worker.h src/config.h \
+ src/influxdb.h src/network.h src/exec/insert.h
 influxdb.o: src/influxdb.c src/influxdb.h src/config.h src/http/worker.h \
- src/http/http_parser.h
+ src/http/http_parser.h src/udp/worker.h
 network.o: src/network.c src/network.h
 utils.o: src/utils.c src/utils.h

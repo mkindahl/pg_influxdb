@@ -40,6 +40,7 @@
 
 #include "config.h"
 #include "http/worker.h"
+#include "udp/worker.h"
 
 PG_MODULE_MAGIC;
 
@@ -52,8 +53,13 @@ char* influxdb_database = NULL;
 int influxdb_http_workers = 4;
 int influxdb_http_worker_restart_time = INFLUXDB_DEFAULT_HTTP_RESTART_TIME;
 
+char* influxdb_udp_service = INFLUXDB_DEFAULT_UDP_SERVICE;
+char* influxdb_udp_schema = INFLUXDB_DEFAULT_SCHEMA_NAME;
+int influxdb_udp_read_buffer = INFLUXDB_DEFAULT_UDP_READ_BUFFER;
+int influxdb_udp_workers = INFLUXDB_DEFAULT_UDP_WORKERS;
+
 void _PG_init(void) {
-  BackgroundWorker worker;
+  BackgroundWorker worker, udp_worker;
 
   /* We use PGC_USERSET to be able to debug this. It could be PGC_SIGHUP. */
   DefineCustomBoolVariable(
@@ -140,9 +146,68 @@ void _PG_init(void) {
       NULL,                               /* assign hook */
       NULL);                              /* show hook */
 
+  DefineCustomStringVariable(
+      "influxdb.udp_service",
+      "Service name or port for UDP connections.",
+      "Service name or port number to listen for UDP connections. "
+      "Defaults to 8089.",
+      &influxdb_udp_service,
+      INFLUXDB_DEFAULT_UDP_SERVICE, /* boot value */
+      PGC_POSTMASTER,               /* option context */
+      0,                            /* option flags */
+      NULL,                         /* check hook */
+      NULL,                         /* assign hook */
+      NULL);                        /* show hook */
+
+  DefineCustomStringVariable(
+      "influxdb.udp_schema",
+      "Target schema for UDP writes.",
+      "Schema name used for UDP writes since UDP has no query parameters "
+      "to specify the target database.",
+      &influxdb_udp_schema,
+      INFLUXDB_DEFAULT_SCHEMA_NAME, /* boot value */
+      PGC_POSTMASTER,               /* option context */
+      0,                            /* option flags */
+      NULL,                         /* check hook */
+      NULL,                         /* assign hook */
+      NULL);                        /* show hook */
+
+  DefineCustomIntVariable(
+      "influxdb.udp_read_buffer",
+      "UDP socket receive buffer size.",
+      "SO_RCVBUF size for the UDP socket. 0 means use the OS default.",
+      &influxdb_udp_read_buffer,
+      INFLUXDB_DEFAULT_UDP_READ_BUFFER, /* boot value */
+      0,                                /* min value */
+      64 * 1024,                        /* max value (64 MB) */
+      PGC_POSTMASTER,                   /* option context */
+      GUC_UNIT_KB,                      /* option flags */
+      NULL,                             /* check hook */
+      NULL,                             /* assign hook */
+      NULL);                            /* show hook */
+
+  DefineCustomIntVariable(
+      "influxdb.udp_workers",
+      "Number of UDP workers.",
+      "Number of UDP workers to spawn. Each gets its own socket via "
+      "SO_REUSEPORT for kernel load balancing.",
+      &influxdb_udp_workers,
+      INFLUXDB_DEFAULT_UDP_WORKERS, /* boot value */
+      0,                            /* min value */
+      20,                           /* max value */
+      PGC_POSTMASTER,               /* option context */
+      0,                            /* option flags */
+      NULL,                         /* check hook */
+      NULL,                         /* assign hook */
+      NULL);                        /* show hook */
+
   MarkGUCPrefixReserved("influxdb");
 
   InfluxHttpWorkerInit(&worker);
   for (int i = 0; i < influxdb_http_workers; i++)
     RegisterBackgroundWorker(&worker);
+
+  InfluxUdpWorkerInit(&udp_worker);
+  for (int i = 0; i < influxdb_udp_workers; i++)
+    RegisterBackgroundWorker(&udp_worker);
 }
