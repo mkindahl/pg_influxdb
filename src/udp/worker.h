@@ -16,18 +16,22 @@
  * <https://www.gnu.org/licenses/>.
  */
 
-#ifndef CONFIG_H_
-#define CONFIG_H_
+#ifndef UDP_WORKER_H_
+#define UDP_WORKER_H_
 
-#define INFLUXDB_DEFAULT_HTTP_SERVICE "8086"
-#define INFLUXDB_DEFAULT_HTTP_RESTART_TIME 20
-#define INFLUXDB_DEFAULT_SCHEMA_NAME "measurements"
-#define INFLUXDB_HTTP_FUNCTION_NAME "InfluxHttpWorkerMain"
-#define INFLUXDB_LIBRARY_NAME "influxdb"
+#include <postgres.h>
 
-#define INFLUXDB_DEFAULT_UDP_SERVICE "8089"
-#define INFLUXDB_DEFAULT_UDP_READ_BUFFER 0
-#define INFLUXDB_DEFAULT_UDP_WORKERS 0
-#define INFLUXDB_UDP_FUNCTION_NAME "InfluxUdpWorkerMain"
+#include <c.h>
+#include <postmaster/bgworker.h>
 
-#endif /* CONFIG_H_ */
+typedef struct InfluxUdpWorkerState {
+  int read_fd;
+  Oid nspoid;
+} InfluxUdpWorkerState;
+
+extern PGDLLEXPORT void InfluxUdpWorkerMain(Datum arg);
+
+extern void InfluxUdpWorkerInitState(InfluxUdpWorkerState* state);
+extern void InfluxUdpWorkerInit(BackgroundWorker* worker);
+
+#endif /* UDP_WORKER_H_ */

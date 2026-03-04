@@ -1,5 +1,5 @@
 /*
- * InfluxDB API to PostgreSQL. Copyright (C) 2025 Mats Kindahl
+ * Copyright (C) 2025 Mats Kindahl
  *
  * This program is free software: you can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License
@@ -28,6 +28,8 @@
 
 #include <memory.h>
 
+#include "influxdb.h"
+
 #define LOG_ADDRSTR(ADDR, ADDRLEN)                                          \
   do {                                                                      \
     char host[NI_MAXHOST], service[NI_MAXSERV];                             \
@@ -43,17 +45,35 @@
     }                                                                       \
   } while (0)
 
-int InfluxNetworkListenerCreate(const char *service, struct sockaddr *addr_out,
-                                socklen_t *addrlen) {
+static void ConfigUdp(int fd) {
   int yes = 1;
-  int err;
-  int fd = -1;
+  int read_buffer_bytes = 1024 * influxdb_udp_read_buffer;
+
+  setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(int));
+
+  if (read_buffer_bytes > 0)
+    setsockopt(fd,
+               SOL_SOCKET,
+               SO_RCVBUF,
+               &read_buffer_bytes,
+               sizeof(read_buffer_bytes));
+}
+
+static void ConfigHttp(int fd) {
+  int yes = 1;
+  setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(int));
+}
+
+static int InfluxResolveAddress(const char* service, int socktype,
+                                void (*config)(int), struct sockaddr* addr_out,
+                                socklen_t* addrlen) {
+  int fd, err;
   struct addrinfo hints, *addrs, *addr;
 
   memset(&hints, 0, sizeof(struct addrinfo));
   hints.ai_family = AF_UNSPEC;
   hints.ai_flags = AI_PASSIVE;
-  hints.ai_socktype = SOCK_STREAM;
+  hints.ai_socktype = socktype;
   hints.ai_protocol = 0;
   hints.ai_canonname = NULL;
   hints.ai_addr = NULL;
@@ -69,7 +89,7 @@ int InfluxNetworkListenerCreate(const char *service, struct sockaddr *addr_out,
     if (fd == PGINVALID_SOCKET)
       continue;
 
-    setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &yes, sizeof(int));
+    (*config)(fd);
 
     LOG_ADDRSTR(addr->ai_addr, addr->ai_addrlen);
 
@@ -84,7 +104,23 @@ int InfluxNetworkListenerCreate(const char *service, struct sockaddr *addr_out,
             (errcode_for_socket_access(),
              errmsg("could not find any address: %m")));
 
+  Assert(fd >= 0);
+
+  if (addr_out) {
+    Assert(addr->ai_addrlen <= addrlen);
+    *addrlen = addr->ai_addrlen;
+    memcpy(addr_out, addr->ai_addr, addr->ai_addrlen);
+  }
+
   pg_freeaddrinfo_all(hints.ai_family, addrs);
+
+  return fd;
+}
+
+int InfluxNetworkListenerCreate(const char* service, struct sockaddr* addr,
+                                socklen_t* addrlen) {
+  int fd =
+      InfluxResolveAddress(service, SOCK_STREAM, ConfigHttp, addr, addrlen);
 
   if (listen(fd, 10) == -1)
     ereport(ERROR,
@@ -96,10 +132,10 @@ int InfluxNetworkListenerCreate(const char *service, struct sockaddr *addr_out,
             (errcode_for_socket_access(),
              errmsg("could not set socket non-blocking: %m")));
 
-  if (addr_out) {
-    Assert(addr->ai_addrlen <= addrlen);
-    memcpy(addr_out, addr->ai_addr, addr->ai_addrlen);
-  }
-
   return fd;
+}
+
+int InfluxNetworkUdpCreate(const char* service, struct sockaddr* addr,
+                           socklen_t* addrlen) {
+  return InfluxResolveAddress(service, SOCK_DGRAM, ConfigUdp, addr, addrlen);
 }
