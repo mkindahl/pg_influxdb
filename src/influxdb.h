@@ -31,4 +31,9 @@ extern char* influxdb_database;
 extern int influxdb_http_workers;
 extern int influxdb_http_worker_restart_time;
 
+extern char* influxdb_udp_service;
+extern char* influxdb_udp_schema;
+extern int influxdb_udp_read_buffer;
+extern int influxdb_udp_workers;
+
 #endif /* INFLUXDB_INFLUXDB_H_ */

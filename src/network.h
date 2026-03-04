@@ -33,5 +33,7 @@ static inline int InfluxNetworkSetNonblocking(int fd) {
 
 int InfluxNetworkListenerCreate(const char* service, struct sockaddr* addr,
                                 socklen_t* addrlen);
+int InfluxNetworkUdpCreate(const char* service, struct sockaddr* addr,
+                           socklen_t* addrlen);
 
 #endif /* NETWORK_H_ */
