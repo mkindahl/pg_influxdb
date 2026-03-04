@@ -637,6 +637,7 @@ void InfluxHttpWorkerMain(Datum arg) {
     CHECK_FOR_INTERRUPTS();
 
     if (ConfigReloadPending) {
+      pgstat_report_activity(STATE_RUNNING, "reading configuration");
       ConfigReloadPending = false;
       ProcessConfigFile(PGC_SIGHUP);
     }
