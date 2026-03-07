@@ -20,6 +20,32 @@ possible.
 - [InfluxDB Line Protocol](docs/line_protocol.md)
 - [InfluxDB HTTP Endpoint](docs/http_endpoint.md)
 
+## Dependencies
+
+
+**Runtime dependencies**:
+
+- PostgreSQL 17 or 18
+- zlib
+
+**Build-time dependencies**:
+
+- PostgreSQL server development headers (`postgresql-server-dev-17`
+  or `postgresql-server-dev-18`)
+- zlib development headers (`zlib1g-dev`)
+- A C compiler (gcc or clang)
+
+**Testing dependencies**:
+
+- Perl modules `IPC::Run`, `HTTP::Response`, and `JSON`.
+
+On Debian/Ubuntu, install all build and test dependencies with:
+
+```bash
+sudo apt-get install postgresql-server-dev-18 zlib1g-dev \
+    libipc-run-perl libhttp-message-perl libjson-perl
+```
+
 ## Building and Installing
 
 Install the [PGDG PostgreSQL version][pgdg]. For example
@@ -28,7 +54,7 @@ Install the [PGDG PostgreSQL version][pgdg]. For example
 sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
 wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
 sudo apt-get update
-sudo apt-get -y install postgresql postgresql-server-dev-13
+sudo apt-get -y install postgresql-18 postgresql-server-dev-18
 ```
 
 To build and install the extension:
