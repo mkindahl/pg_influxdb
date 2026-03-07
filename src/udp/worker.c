@@ -124,7 +124,7 @@ void InfluxUdpWorkerMain(Datum arg) {
 
       PushActiveSnapshot(GetTransactionSnapshot());
 
-      process_text_internal(state.nspoid, buffer, len);
+      process_text_internal(state.nspoid, buffer, len, 1);
 
       if ((err = SPI_finish()) != SPI_OK_FINISH)
         elog(ERROR, "SPI_finish failed: %s", SPI_result_code_string(err));

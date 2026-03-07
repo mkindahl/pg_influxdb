@@ -42,6 +42,8 @@ END_OF_TEXT
 
 $node->start;
 
+my $invalid_precision = has_error(qr/invalid precision/);
+
 $node->safe_psql( "postgres", <<"END_OF_TEXT");
 CREATE EXTENSION influxdb;
 CREATE SCHEMA $schema;
@@ -141,6 +143,112 @@ cmp_ok( length($content), ">", 8 * 1024,
     "length " . length($content) . " is greater than 8 KiB" );
 
 test_endpoint "http://localhost:$port/write?db=metrics", $content, NO_CONTENT;
+
+$node->safe_psql( "postgres", <<"END_OF_TEXT");
+CREATE TABLE $schema.cpu(_time timestamp, host text, usage_idle float8, _tags jsonb, _fields jsonb);
+END_OF_TEXT
+
+# -- Precision tests --
+
+# Test precision=s (second-precision timestamps)
+# 1574753954 seconds = 2019-11-26 07:39:14 UTC
+test_endpoint "http://localhost:$port/write?db=$schema&precision=s",
+  <<'END_OF_TEXT', NO_CONTENT;
+cpu,host=server01 usage_idle=99.5 1574753954
+END_OF_TEXT
+
+$result = $node->safe_psql( "postgres", <<"END_OF_SQL" );
+select _time, host, usage_idle
+  from $schema.cpu
+ where _time = '2019-11-26 07:39:14'
+END_OF_SQL
+
+$expected = InfluxDB::Test::ResultSet->new(<<'END_OF_TEXT');
+2019-11-26 07:39:14|server01|99.5
+END_OF_TEXT
+
+is( $result, $expected, "precision=s produces correct timestamp" );
+
+# Test precision=ms (millisecond-precision timestamps)
+# 1574753964000 ms = 2019-11-26 07:39:24 UTC
+test_endpoint "http://localhost:$port/write?db=$schema&precision=ms",
+  <<'END_OF_TEXT', NO_CONTENT;
+cpu,host=server02 usage_idle=88.3 1574753964000
+END_OF_TEXT
+
+$result = $node->safe_psql( "postgres", <<"END_OF_SQL" );
+select _time, host, usage_idle
+  from $schema.cpu
+ where _time = '2019-11-26 07:39:24'
+END_OF_SQL
+
+$expected = InfluxDB::Test::ResultSet->new(<<'END_OF_TEXT');
+2019-11-26 07:39:24|server02|88.3
+END_OF_TEXT
+
+is( $result, $expected, "precision=ms produces correct timestamp" );
+
+# Test precision=us (microsecond-precision timestamps)
+# 1574753974000000 us = 2019-11-26 07:39:34 UTC
+test_endpoint "http://localhost:$port/write?db=$schema&precision=us",
+  <<'END_OF_TEXT', NO_CONTENT;
+cpu,host=server03 usage_idle=77.1 1574753974000000
+END_OF_TEXT
+
+$result = $node->safe_psql( "postgres", <<"END_OF_SQL" );
+select _time, host, usage_idle
+  from $schema.cpu
+ where _time = '2019-11-26 07:39:34'
+END_OF_SQL
+
+$expected = InfluxDB::Test::ResultSet->new(<<'END_OF_TEXT');
+2019-11-26 07:39:34|server03|77.1
+END_OF_TEXT
+
+is( $result, $expected, "precision=us produces correct timestamp" );
+
+# Test no precision param (default = nanoseconds, backward compat)
+# 1574753984000000000 ns = 2019-11-26 07:39:44 UTC
+test_endpoint "http://localhost:$port/write?db=$schema",
+  <<'END_OF_TEXT', NO_CONTENT;
+cpu,host=server04 usage_idle=66.2 1574753984000000000
+END_OF_TEXT
+
+$result = $node->safe_psql( "postgres", <<"END_OF_SQL" );
+select _time, host, usage_idle
+  from $schema.cpu
+ where _time = '2019-11-26 07:39:44'
+END_OF_SQL
+
+$expected = InfluxDB::Test::ResultSet->new(<<'END_OF_TEXT');
+2019-11-26 07:39:44|server04|66.2
+END_OF_TEXT
+
+is( $result, $expected, "no precision param defaults to nanoseconds" );
+
+# Test precision=ns explicitly produces same result as no precision
+test_endpoint "http://localhost:$port/write?db=$schema&precision=ns",
+  <<'END_OF_TEXT', NO_CONTENT;
+cpu,host=server05 usage_idle=55.0 1574753994000000000
+END_OF_TEXT
+
+$result = $node->safe_psql( "postgres", <<"END_OF_SQL" );
+select _time, host, usage_idle
+  from $schema.cpu
+ where _time = '2019-11-26 07:39:54'
+END_OF_SQL
+
+$expected = InfluxDB::Test::ResultSet->new(<<'END_OF_TEXT');
+2019-11-26 07:39:54|server05|55
+END_OF_TEXT
+
+is( $result, $expected, "precision=ns same as default" );
+
+# Test invalid precision returns 400 Bad Request
+test_endpoint "http://localhost:$port/write?db=$schema&precision=xyz",
+  <<'END_OF_TEXT', BAD_REQUEST, $invalid_precision;
+cpu,host=server06 usage_idle=44.0 1574753954
+END_OF_TEXT
 
 $node->stop;
 
