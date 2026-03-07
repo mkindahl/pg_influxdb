@@ -43,6 +43,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <zlib.h>
 
 #include <sys/epoll.h>
 #include <sys/socket.h>
@@ -69,6 +70,14 @@ typedef enum InfluxHttpRequestType {
 } InfluxHttpRequestType;
 
 /*
+ * Struct: State for an HTTP worker connection.
+ */
+typedef enum InfluxHttpHeaderState {
+  HEADER_STATE_NONE,
+  HEADER_STATE_CONTENT_ENCODING,
+} InfluxHttpHeaderState;
+
+/*
  * Struct: Data for an InfluxDB HTTP request.
  */
 typedef struct InfluxHttpRequestData {
@@ -78,7 +87,9 @@ typedef struct InfluxHttpRequestData {
       precision_multiplier; /* Timestamp precision multiplier to nanoseconds */
   const char* error;        /* Error message for the client, or NULL */
   bool complete;            /* Set by on_message_complete callback */
+  bool is_gzip;             /* Content-Encoding: gzip */
   StringInfoData remaining; /* Leftover partial line from on_body */
+  InfluxHttpHeaderState header_state; /* Which header we're currently parsing */
 } InfluxHttpRequestData;
 
 static void HttpWorkerInsertMeasurements(Oid nspid, const char* buf,
@@ -234,6 +245,76 @@ static int on_url(http_parser* parser, const char* at, size_t length) {
   return 1; /* Error */
 }
 
+static struct {
+  const char* hdr;
+  size_t len;
+  InfluxHttpHeaderState header_state;
+} headers[] = {{"Content-Encoding", 16, HEADER_STATE_CONTENT_ENCODING}};
+
+static int on_header_field(http_parser* parser, const char* at, size_t length) {
+  InfluxHttpRequestData* data = parser->data;
+  data->header_state = HEADER_STATE_NONE;
+  for (int i = 0; i < lengthof(headers); ++i)
+    if (length == headers[i].len &&
+        strncasecmp(at, headers[i].hdr, headers[i].len) == 0)
+      data->header_state = headers[i].header_state;
+  return 0;
+}
+
+static int on_header_value(http_parser* parser, const char* at, size_t length) {
+  InfluxHttpRequestData* data = parser->data;
+  if (data->header_state == HEADER_STATE_CONTENT_ENCODING) {
+    if (length == 4 && strncasecmp(at, "gzip", 4) == 0)
+      data->is_gzip = true;
+  }
+  data->header_state = HEADER_STATE_NONE;
+  return 0;
+}
+
+static bool inflate_gzip(const char* src, size_t srclen, char** dst,
+                         size_t* dstlen) {
+  z_stream strm;
+  size_t bufsize = srclen * 4; /* Initial estimate */
+  char* outbuf;
+  int ret;
+
+  memset(&strm, 0, sizeof(strm));
+
+  /* windowBits = 15 + 16 to enable gzip decoding */
+  ret = inflateInit2(&strm, 15 + 16);
+  if (ret != Z_OK)
+    return false;
+
+  outbuf = palloc(bufsize);
+  strm.next_in = (Bytef*)src;
+  strm.avail_in = srclen;
+
+  strm.next_out = (Bytef*)outbuf;
+  strm.avail_out = bufsize;
+
+  while (1) {
+    ret = inflate(&strm, Z_FINISH);
+    if (ret == Z_STREAM_END)
+      break;
+    if (ret == Z_BUF_ERROR || (ret == Z_OK && strm.avail_out == 0)) {
+      size_t used = bufsize - strm.avail_out;
+      bufsize *= 2;
+      outbuf = repalloc(outbuf, bufsize);
+      strm.next_out = (Bytef*)outbuf + used;
+      strm.avail_out = bufsize - used;
+      continue;
+    }
+    inflateEnd(&strm);
+    pfree(outbuf);
+    return false;
+  }
+
+  *dstlen = strm.total_out;
+  *dst = outbuf;
+  inflateEnd(&strm);
+  return true;
+}
+
 #ifndef __GNU_LIBRARY__
 static const void* memrchr(const void* buf, int c, size_t len) {
   const unsigned char* ptr = (const unsigned char*)buf + len;
@@ -290,6 +371,18 @@ static int on_body(http_parser* parser, const char* buf, size_t len) {
 
   switch (data->type) {
     case OPERATION_WRITE:
+      if (data->is_gzip) {
+        char* decompressed;
+        size_t decompressed_len;
+        int ret;
+        if (!inflate_gzip(buf, len, &decompressed, &decompressed_len)) {
+          parser->status_code = 400;
+          return 1;
+        }
+        ret = on_body_write(data, decompressed, decompressed_len);
+        pfree(decompressed);
+        return ret;
+      }
       return on_body_write(data, buf, len);
     case OPERATION_PING:
       return 0; /* Ping has no body to process */
@@ -504,6 +597,8 @@ void InfluxHttpWorkerConnectionInit(InfluxHttpConnectionEntry* entry) {
   memset(&entry->settings, 0, sizeof(entry->settings));
 
   entry->settings.on_url = on_url;
+  entry->settings.on_header_field = on_header_field;
+  entry->settings.on_header_value = on_header_value;
   entry->settings.on_body = on_body;
   entry->settings.on_message_complete = on_message_complete;
   http_parser_init(&entry->parser, HTTP_REQUEST);
