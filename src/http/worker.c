@@ -59,11 +59,18 @@
 
 #define BUFFER_SIZE (8 * 1024)
 
+/*
+ * Enum: State for an HTTP worker connection.
+ */
 typedef enum InfluxHttpRequestType {
   OPERATION_UNDEF,
   OPERATION_WRITE,
+  OPERATION_PING,
 } InfluxHttpRequestType;
 
+/*
+ * Struct: Data for an InfluxDB HTTP request.
+ */
 typedef struct InfluxHttpRequestData {
   InfluxHttpRequestType type; /* Endpoint type, e.g, a write endpoint */
   Oid nspoid;                 /* Namespace OID for the "database" */
@@ -170,22 +177,56 @@ static void parse_write_params(InfluxHttpRequestData* data, const char* start) {
     handle_write_param(data, key, val, ptr);
 }
 
-static int on_url(http_parser* parser, const char* at, size_t length) {
-  const char write[] = "/write";
-  size_t pathlen = strcspn(at, "? ");
+/*
+ * Function: on_url_write
+ * Description: Handles URL parsing for the write operation.
+ */
+static int on_url_write(http_parser* parser, InfluxHttpRequestData* data,
+                        const char* params) {
+  data->type = OPERATION_WRITE;
+  data->precision_multiplier = 1; /* default: nanoseconds */
+  parse_write_params(data, params);
+  if (data->precision_multiplier < 0) {
+    data->error =
+        "invalid precision; valid precision units are ns, us, ms, and s";
+    parser->status_code = 400;
+    return 1;
+  }
+  return 0; /*  All OK */
+}
 
-  if (pathlen == sizeof(write) - 1 && strncmp(at, write, pathlen) == 0) {
-    InfluxHttpRequestData* data = parser->data;
-    data->type = OPERATION_WRITE;
-    data->precision_multiplier = 1; /* default: nanoseconds */
-    parse_write_params(data, &at[pathlen]);
-    if (data->precision_multiplier < 0) {
-      data->error =
-          "invalid precision; valid precision units are ns, us, ms, and s";
-      parser->status_code = 400;
-      return 1;
-    }
-    return 0; /*  All OK */
+static int on_url_ping(http_parser* parser, InfluxHttpRequestData* data,
+                       const char* params) {
+  data->type = OPERATION_PING;
+  return 0; /* All OK */
+}
+
+/*
+ * Dispatch table for handling different URL paths.
+ */
+static struct operation {
+  const char* path;
+  size_t len;
+  int (*exec)(http_parser*, InfluxHttpRequestData*, const char*);
+} operations[] = {
+    {"/write", sizeof("/write"), on_url_write},
+    {"/ping", sizeof("/ping"), on_url_ping},
+};
+
+/*
+ * Function: on_url
+ * Description: Handles URL parsing for different operations.
+ */
+static int on_url(http_parser* parser, const char* at, size_t length) {
+  size_t pathlen = strcspn(at, "? ");
+  InfluxHttpRequestData* data = parser->data;
+
+  /* Iterate over the dispatch table and call the exec function if there are
+   * matches. */
+  for (int i = 0; i < lengthof(operations); ++i) {
+    struct operation* oper = &operations[i];
+    if (pathlen == oper->len - 1 && strncmp(at, oper->path, pathlen) == 0)
+      return (*oper->exec)(parser, data, &at[pathlen]);
   }
 
   parser->status_code = 404;
@@ -204,6 +245,10 @@ static const void* memrchr(const void* buf, int c, size_t len) {
 }
 #endif
 
+/*
+ * Function: on_body_write
+ * Description: Handles the body of a write request.
+ */
 static int on_body_write(InfluxHttpRequestData* data, const char* buf,
                          size_t len) {
   const char* last_nl = memrchr(buf, '\n', len);
@@ -236,13 +281,18 @@ static int on_body_write(InfluxHttpRequestData* data, const char* buf,
   return 0;
 }
 
+/*
+ * Function: on_body
+ * Description: Handles the body of an HTTP request.
+ */
 static int on_body(http_parser* parser, const char* buf, size_t len) {
   InfluxHttpRequestData* data = parser->data;
 
   switch (data->type) {
     case OPERATION_WRITE:
       return on_body_write(data, buf, len);
-
+    case OPERATION_PING:
+      return 0; /* Ping has no body to process */
     case OPERATION_UNDEF:
       Assert(0); /* Shouldn't be reached */
       break;
@@ -736,8 +786,22 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
         InfluxHttpWorkerSendErrorResponse(
             state, fd, 400, JsonbValueToJsonb(result));
       } else if (req_data->complete) {
-        InfluxHttpWorkerSendResponse(
-            state, fd, 204, fields, sizeof(fields) / sizeof(*fields), NULL);
+        if (req_data->type == OPERATION_PING) {
+          InfluxHttpHeaderData ping_fields[] = {
+              {"X-Influxdb-Version", "pg_influxdb"},
+              {"Connection", "close"},
+          };
+          InfluxHttpWorkerSendResponse(
+              state,
+              fd,
+              204,
+              ping_fields,
+              sizeof(ping_fields) / sizeof(*ping_fields),
+              NULL);
+        } else {
+          InfluxHttpWorkerSendResponse(
+              state, fd, 204, fields, sizeof(fields) / sizeof(*fields), NULL);
+        }
         cleanup_connection = true;
       }
     }
