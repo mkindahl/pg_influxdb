@@ -121,7 +121,8 @@ static void InfluxFillAndRemovePairs(List** pairs, AttInMetadata* attinmeta,
  * afterwards.
  */
 static bool InfluxFillValues(InfluxDataPoint* data_point, TupleDesc tupdesc,
-                             Datum* values, char* cnulls, bool raise_error) {
+                             Datum* values, char* cnulls, bool raise_error,
+                             int64 precision_multiplier) {
   AttInMetadata* attinmeta = TupleDescGetAttInMetadata(tupdesc);
   int64 timestamp;
   int time_attnum, tags_attnum, fields_attnum;
@@ -169,9 +170,10 @@ static bool InfluxFillValues(InfluxDataPoint* data_point, TupleDesc tupdesc,
     }
 
     /*
-     * PostgreSQL timestamp are in microseconds since PostgreSQL
-     * epoch, so correct the timestamp from UNIX timestamp.
+     * Normalize to nanoseconds using the precision multiplier, then
+     * convert to microseconds for PostgreSQL timestamps.
      */
+    timestamp *= precision_multiplier;
     timestamp /= 1000;
     timestamp -= USECS_PER_SEC *
                  ((POSTGRES_EPOCH_JDATE - UNIX_EPOCH_JDATE) * SECS_PER_DAY);
@@ -208,7 +210,8 @@ static bool InfluxFillValues(InfluxDataPoint* data_point, TupleDesc tupdesc,
  * Insert a data point into a schema.
  */
 void InfluxInsertDataPoint(Oid nspid, InfluxDataPoint* data_point,
-                           bool raise_error) {
+                           bool raise_error,
+                           int64 precision_multiplier) {
   char* cnulls;
   Oid relid;
   StringInfo measurement;
@@ -248,7 +251,8 @@ void InfluxInsertDataPoint(Oid nspid, InfluxDataPoint* data_point,
   values = palloc0_array(Datum, natts);
   cnulls = palloc_array(char, natts);
 
-  if (InfluxFillValues(data_point, tupdesc, values, cnulls, raise_error)) {
+  if (InfluxFillValues(data_point, tupdesc, values, cnulls, raise_error,
+                       precision_multiplier)) {
     SPIPlanPtr plan = InfluxGetPlanFor(relation);
 
     err = SPI_execute_plan(plan, values, cnulls, false, 0);
@@ -261,7 +265,8 @@ void InfluxInsertDataPoint(Oid nspid, InfluxDataPoint* data_point,
   table_close(relation, NoLock);
 }
 
-void process_text_internal(Oid nspid, char* buf, size_t len) {
+void process_text_internal(Oid nspid, char* buf, size_t len,
+                           int64 precision_multiplier) {
   InfluxParseState state;
 
   elog(DEBUG1,
@@ -275,7 +280,7 @@ void process_text_internal(Oid nspid, char* buf, size_t len) {
     InfluxDataPoint data_point;
 
     InfluxParseDataPoint(&state, &data_point);
-    InfluxInsertDataPoint(nspid, &data_point, true);
+    InfluxInsertDataPoint(nspid, &data_point, true, precision_multiplier);
   }
 
   InfluxParseStateFinish(&state);
@@ -291,7 +296,7 @@ Datum process_text(PG_FUNCTION_ARGS) {
 
   PushActiveSnapshot(GetTransactionSnapshot());
 
-  process_text_internal(nspid, VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input));
+  process_text_internal(nspid, VARDATA_ANY(input), VARSIZE_ANY_EXHDR(input), 1);
 
   if ((err = SPI_finish()) != SPI_OK_FINISH)
     elog(ERROR, "SPI_finish failed: %s", SPI_result_code_string(err));

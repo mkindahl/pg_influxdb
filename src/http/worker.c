@@ -67,29 +67,73 @@ typedef enum InfluxHttpRequestType {
 typedef struct InfluxHttpRequestData {
   InfluxHttpRequestType type; /* Endpoint type, e.g, a write endpoint */
   Oid nspoid;                 /* Namespace OID for the "database" */
-  bool complete;              /* Set by on_message_complete callback */
-  StringInfoData remaining;   /* Leftover partial line from on_body */
+  int64
+      precision_multiplier; /* Timestamp precision multiplier to nanoseconds */
+  const char* error;        /* Error message for the client, or NULL */
+  bool complete;            /* Set by on_message_complete callback */
+  StringInfoData remaining; /* Leftover partial line from on_body */
 } InfluxHttpRequestData;
 
 static void HttpWorkerInsertMeasurements(Oid nspid, const char* buf,
-                                         size_t buflen) {
+                                         size_t buflen,
+                                         int64 precision_multiplier) {
   pgstat_report_activity(STATE_RUNNING, "processing lines");
 
-  process_text_internal(nspid, (char*)buf, buflen);
+  process_text_internal(nspid, (char*)buf, buflen, precision_multiplier);
 
   pgstat_report_activity(STATE_IDLE, NULL);
 }
+
+static struct {
+  const char* precision;
+  size_t length;
+  int64 multiplier;
+} multipliers[] = {
+    {"ns", 2, 1},
+    {"us", 2, 1000L},
+    {"ms", 2, 1000000L},
+    {"s", 1, 1000000000L},
+    {"m", 1, 60L * 1000000000L},
+    {"h", 1, 60L * 60L * 1000000000L},
+};
+
+static int64 get_precision_multiplier(const char* val, size_t len) {
+  for (int i = 0; i < lengthof(multipliers); ++i) {
+    if (multipliers[i].length == len &&
+        strncmp(val, multipliers[i].precision, len) == 0)
+      return multipliers[i].multiplier;
+  }
+
+  return -1;
+}
+
+static void handle_write_param_db(InfluxHttpRequestData* data, const char* val,
+                                  size_t len) {
+  char name[NAMEDATALEN] = {0};
+  memcpy(name, val, len);
+  data->nspoid = get_namespace_oid(name, false);
+}
+
+static void handle_write_param_precision(InfluxHttpRequestData* data,
+                                         const char* val, size_t len) {
+  data->precision_multiplier = get_precision_multiplier(val, len);
+}
+
+static struct {
+  const char* param;
+  void (*cmd)(InfluxHttpRequestData* data, const char* val, size_t len);
+} params[] = {
+    {"db", handle_write_param_db},
+    {"precision", handle_write_param_precision},
+};
 
 static void handle_write_param(InfluxHttpRequestData* data, const char* key,
                                const char* val, const char* endptr) {
   const size_t keylen = (val - 1) - key;
   const size_t vallen = endptr - val;
-  char name[NAMEDATALEN] = {0};
-
-  if (strncmp(key, "db", keylen) == 0) {
-    memcpy(name, val, vallen);
-    data->nspoid = get_namespace_oid(name, false);
-  }
+  for (int i = 0; i < lengthof(params); ++i)
+    if (strncmp(key, params[i].param, keylen) == 0)
+      return (*params[i].cmd)(data, val, vallen);
 }
 
 static void parse_write_params(InfluxHttpRequestData* data, const char* start) {
@@ -133,7 +177,14 @@ static int on_url(http_parser* parser, const char* at, size_t length) {
   if (pathlen == sizeof(write) - 1 && strncmp(at, write, pathlen) == 0) {
     InfluxHttpRequestData* data = parser->data;
     data->type = OPERATION_WRITE;
+    data->precision_multiplier = 1; /* default: nanoseconds */
     parse_write_params(data, &at[pathlen]);
+    if (data->precision_multiplier < 0) {
+      data->error =
+          "invalid precision; valid precision units are ns, us, ms, and s";
+      parser->status_code = 400;
+      return 1;
+    }
     return 0; /*  All OK */
   }
 
@@ -167,11 +218,14 @@ static int on_body_write(InfluxHttpRequestData* data, const char* buf,
     if (data->remaining.len > 0) {
       /* Prepend previous remainder to the complete portion */
       appendBinaryStringInfo(&data->remaining, buf, complete);
-      HttpWorkerInsertMeasurements(
-          data->nspoid, data->remaining.data, data->remaining.len);
+      HttpWorkerInsertMeasurements(data->nspoid,
+                                   data->remaining.data,
+                                   data->remaining.len,
+                                   data->precision_multiplier);
       resetStringInfo(&data->remaining);
     } else {
-      HttpWorkerInsertMeasurements(data->nspoid, buf, complete);
+      HttpWorkerInsertMeasurements(
+          data->nspoid, buf, complete, data->precision_multiplier);
     }
 
     /* Save any trailing partial line */
@@ -202,12 +256,14 @@ static int on_message_complete(http_parser* parser) {
 
   /*
    * Process any remaining partial line, which we can have because the
-   * sender did not send a terminating newline. We accept this even though it is
-   * not following the protocol.
+   * sender did not send a terminating newline. We accept this even though it
+   * is not following the protocol.
    */
   if (data->remaining.len > 0)
-    HttpWorkerInsertMeasurements(
-        data->nspoid, data->remaining.data, data->remaining.len);
+    HttpWorkerInsertMeasurements(data->nspoid,
+                                 data->remaining.data,
+                                 data->remaining.len,
+                                 data->precision_multiplier);
 
   return 0;
 }
@@ -649,10 +705,12 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
       if (entry->parser.status_code > 0) {
         JsonbParseState* jbstate = NULL;
         JsonbValue* result;
+        const char* errmsg =
+            req_data->error ? req_data->error : "endpoint does not exist";
 
         (void)pushJsonbValue(&jbstate, WJB_BEGIN_OBJECT, NULL);
 
-        InfluxJsonbAddKeyValue(&jbstate, "error", "endpoint does not exist");
+        InfluxJsonbAddKeyValue(&jbstate, "error", errmsg);
 
         result = pushJsonbValue(&jbstate, WJB_END_OBJECT, NULL);
 
