@@ -208,7 +208,7 @@ void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state, int fd,
    * terminating newline and add a proper CRLF below.
    */
   asctime_r(localtime(&now), buf);
-  buf[strlen(buf) - 1] = '0';
+  buf[strlen(buf) - 1] = '\0';
   appendStringInfo(&response, "Date: %s\r\n", buf);
 
   if (body) {
