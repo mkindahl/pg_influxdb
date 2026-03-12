@@ -31,12 +31,23 @@
 /*
  * Struct: InfluxHttpConnectionEntry
  *
- * Connection state for a single connection.
+ * Connection state for a single connection. The connection state has
+ * a separate memory context with a lifetime as long as the
+ * connection.
+ *
+ * Note:
+ *   Note that this structure is stored in a hash, so the order of the
+ *   fields are important. They key fields should always be first.
+ *
  */
 typedef struct InfluxHttpConnectionEntry {
-  int read_fd; /* Key field */
+  /* Key fields */
+  int read_fd;
+
+  /* Value fields */
   http_parser_settings settings;
   http_parser parser;
+  MemoryContext mcxt;
 } InfluxHttpConnectionEntry;
 
 /*
@@ -56,8 +67,8 @@ typedef struct InfluxHttpWorkerState {
  * Headers for a HTTP request or response.
  */
 typedef struct InfluxHttpHeaderData {
-  const char name[64];
-  const char value[256 - 64];
+  const char* name;
+  const char* value;
 } InfluxHttpHeaderData;
 
 extern PGDLLEXPORT void InfluxHttpWorkerMain(Datum arg);
