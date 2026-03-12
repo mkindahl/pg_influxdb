@@ -52,6 +52,7 @@
 #include "influxdb.h"
 #include "network.h"
 #include "utils.h"
+#include "utils/palloc.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -176,7 +177,7 @@ static const char* InfluxHttpStatusMessage(int status_code) {
  */
 void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state, int fd,
                                   int status_code,
-                                  const InfluxHttpHeaderData field[],
+                                  const InfluxHttpHeaderData* field,
                                   size_t nfields, const char* body) {
   ssize_t sent;
   StringInfoData response;
@@ -245,10 +246,6 @@ void InfluxHttpWorkerSendErrorResponse(InfluxHttpWorkerState* state, int fd,
   size_t nfields = sizeof(fields) / sizeof(*fields);
   StringInfoData text_content = {NULL};
 
-  /*
-   * Maybe we can use a scratch memory context for each request
-   * instead and make cleanup easy.
-   */
   if (content) {
     initStringInfo(&text_content);
     (void)JsonbToCString(&text_content, &content->root, VARSIZE(content));
@@ -257,13 +254,12 @@ void InfluxHttpWorkerSendErrorResponse(InfluxHttpWorkerState* state, int fd,
   InfluxHttpWorkerSendResponse(
       state, fd, status_code, fields, nfields, text_content.data);
 
-  if (text_content.data)
-    pfree(text_content.data);
-
   InfluxHttpWorkerDelConnection(state, fd);
 }
 
 void InfluxHttpWorkerDelConnection(InfluxHttpWorkerState* state, int fd) {
+  InfluxHttpConnectionEntry* entry;
+
   elog(DEBUG2,
        "%s: removing file descriptor %d from epoll set %d",
        __func__,
@@ -271,6 +267,19 @@ void InfluxHttpWorkerDelConnection(InfluxHttpWorkerState* state, int fd) {
        state->epoll_fd);
 
   Assert(state->http_connection_hash != NULL);
+
+  /*
+   * Look up entry to release resources before removing it. The
+   * pointer returned by HASH_REMOVE is a dangling pointer that should
+   * not be dereferenced.
+   *
+   * See src/backend/utils/hash/dynahash.c
+   */
+  entry = hash_search(state->http_connection_hash, &fd, HASH_FIND, NULL);
+  if (entry != NULL) {
+    Assert(entry->mcxt != NULL);
+    MemoryContextDelete(entry->mcxt);
+  }
 
   hash_search(state->http_connection_hash, &fd, HASH_REMOVE, NULL);
 
@@ -334,11 +343,16 @@ void InfluxHttpWorkerAddConnection(InfluxHttpWorkerState* state, int fd) {
   if (found) {
     elog(WARNING, "adding connection %d a second time, not changing state", fd);
   } else {
+    entry->mcxt = AllocSetContextCreate(
+        CurrentMemoryContext, "InfluxHttpConnection", ALLOCSET_SMALL_SIZES);
+
     memset(&entry->settings, 0, sizeof(entry->settings));
     entry->settings.on_url = on_url;
     entry->settings.on_body = on_body;
     http_parser_init(&entry->parser, HTTP_REQUEST);
-    entry->parser.data = palloc0(sizeof(InfluxHttpRequestData));
+
+    entry->parser.data =
+        MemoryContextAllocZero(entry->mcxt, sizeof(InfluxHttpRequestData));
   }
 }
 
@@ -450,6 +464,14 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
         {"Connection", "close"},
     };
 
+    entry = InfluxHttpWorkerGetConnection(state, fd);
+    if (entry == NULL) {
+      elog(LOG, "entry for file descriptor %d not found", fd);
+      break;
+    }
+
+    MemoryContextSwitchTo(entry->mcxt);
+
     initStringInfo(&request);
 
     /* Read data info a buffer */
@@ -475,12 +497,6 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
     }
 
     /* Once all data is read, we process it it and send a response. */
-
-    entry = InfluxHttpWorkerGetConnection(state, fd);
-    if (entry == NULL) {
-      elog(LOG, "entry for file descriptor %d not found", fd);
-      break;
-    }
 
     SetCurrentStatementStartTimestamp();
     StartTransactionCommand();
@@ -542,6 +558,12 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
           state, fd, 204, fields, sizeof(fields) / sizeof(*fields), NULL);
       InfluxHttpWorkerDelConnection(state, fd);
     }
+
+    /*
+     * We need to restore the memory context here. Both branches will
+     * delete the connection memory context.
+     */
+    MemoryContextSwitchTo(oldcontext);
   }
   PG_CATCH();
   {
