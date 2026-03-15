@@ -67,6 +67,8 @@ typedef enum InfluxHttpRequestType {
 typedef struct InfluxHttpRequestData {
   InfluxHttpRequestType type; /* Endpoint type, e.g, a write endpoint */
   Oid nspoid;                 /* Namespace OID for the "database" */
+  bool complete;              /* Set by on_message_complete callback */
+  StringInfoData remaining;   /* Leftover partial line from on_body */
 } InfluxHttpRequestData;
 
 static void HttpWorkerInsertMeasurements(Oid nspid, const char* buf,
@@ -140,15 +142,74 @@ static int on_url(http_parser* parser, const char* at, size_t length) {
   return 1; /* Error */
 }
 
+#ifndef __GNU_LIBRARY__
+static const void* memrchr(const void* buf, int c, size_t len) {
+  const unsigned char* ptr = (const unsigned char*)buf + len;
+  while (len-- > 0) {
+    if (*--ptr == (unsigned char)c)
+      return ptr;
+  }
+  return NULL;
+}
+#endif
+
+static int on_body_write(InfluxHttpRequestData* data, const char* buf,
+                         size_t len) {
+  const char* last_nl = memrchr(buf, '\n', len);
+
+  if (last_nl == NULL) {
+    /* No complete line in this chunk, just accumulate */
+    appendBinaryStringInfo(&data->remaining, buf, len);
+  } else {
+    size_t complete = (last_nl - buf) + 1;
+    size_t leftover = len - complete;
+
+    if (data->remaining.len > 0) {
+      /* Prepend previous remainder to the complete portion */
+      appendBinaryStringInfo(&data->remaining, buf, complete);
+      HttpWorkerInsertMeasurements(
+          data->nspoid, data->remaining.data, data->remaining.len);
+      resetStringInfo(&data->remaining);
+    } else {
+      HttpWorkerInsertMeasurements(data->nspoid, buf, complete);
+    }
+
+    /* Save any trailing partial line */
+    if (leftover > 0)
+      appendBinaryStringInfo(&data->remaining, last_nl + 1, leftover);
+  }
+
+  return 0;
+}
+
 static int on_body(http_parser* parser, const char* buf, size_t len) {
   InfluxHttpRequestData* data = parser->data;
+
   switch (data->type) {
     case OPERATION_WRITE:
-      HttpWorkerInsertMeasurements(data->nspoid, buf, len);
-      return 0;
-    default:
-      return 1;
+      return on_body_write(data, buf, len);
+
+    case OPERATION_UNDEF:
+      Assert(0); /* Shouldn't be reached */
+      break;
   }
+  return 1;
+}
+
+static int on_message_complete(http_parser* parser) {
+  InfluxHttpRequestData* data = parser->data;
+  data->complete = true;
+
+  /*
+   * Process any remaining partial line, which we can have because the
+   * sender did not send a terminating newline. We accept this even though it is
+   * not following the protocol.
+   */
+  if (data->remaining.len > 0)
+    HttpWorkerInsertMeasurements(
+        data->nspoid, data->remaining.data, data->remaining.len);
+
+  return 0;
 }
 
 static const char* InfluxHttpStatusMessage(int status_code) {
@@ -254,10 +315,10 @@ void InfluxHttpWorkerSendErrorResponse(InfluxHttpWorkerState* state, int fd,
   InfluxHttpWorkerSendResponse(
       state, fd, status_code, fields, nfields, text_content.data);
 
-  InfluxHttpWorkerDelConnection(state, fd);
+  InfluxHttpWorkerConnectionDelete(state, fd);
 }
 
-void InfluxHttpWorkerDelConnection(InfluxHttpWorkerState* state, int fd) {
+void InfluxHttpWorkerConnectionDelete(InfluxHttpWorkerState* state, int fd) {
   InfluxHttpConnectionEntry* entry;
 
   elog(DEBUG2,
@@ -313,8 +374,29 @@ static void extend_epoll_set(InfluxHttpWorkerState* state, int fd) {
                    state->epoll_fd));
 }
 
+void InfluxHttpWorkerConnectioInit(InfluxHttpConnectionEntry* entry) {
+  MemoryContext oldcontext;
+
+  entry->mcxt = AllocSetContextCreate(
+      CurrentMemoryContext, "InfluxHttpConnection", ALLOCSET_SMALL_SIZES);
+
+  memset(&entry->settings, 0, sizeof(entry->settings));
+
+  entry->settings.on_url = on_url;
+  entry->settings.on_body = on_body;
+  entry->settings.on_message_complete = on_message_complete;
+  http_parser_init(&entry->parser, HTTP_REQUEST);
+
+  entry->parser.data =
+      MemoryContextAllocZero(entry->mcxt, sizeof(InfluxHttpRequestData));
+
+  oldcontext = MemoryContextSwitchTo(entry->mcxt);
+  initStringInfo(&((InfluxHttpRequestData*)entry->parser.data)->remaining);
+  MemoryContextSwitchTo(oldcontext);
+}
+
 /*
- * Function: InfluxHttpWorkerAddConnection
+ * Function: InfluxHttpWorkerConnectionAdd
  *
  * Add a new connection to the state and set up the necessary
  * processing information.
@@ -324,7 +406,7 @@ static void extend_epoll_set(InfluxHttpWorkerState* state, int fd) {
  *    state - InfluxDB HTTP worker state
  *    fd - file descriptor for connection where data is read
  */
-void InfluxHttpWorkerAddConnection(InfluxHttpWorkerState* state, int fd) {
+void InfluxHttpWorkerConnectionCreate(InfluxHttpWorkerState* state, int fd) {
   InfluxHttpConnectionEntry* entry;
   bool found;
 
@@ -340,20 +422,10 @@ void InfluxHttpWorkerAddConnection(InfluxHttpWorkerState* state, int fd) {
   }
 
   entry = hash_search(state->http_connection_hash, &fd, HASH_ENTER, &found);
-  if (found) {
+  if (found)
     elog(WARNING, "adding connection %d a second time, not changing state", fd);
-  } else {
-    entry->mcxt = AllocSetContextCreate(
-        CurrentMemoryContext, "InfluxHttpConnection", ALLOCSET_SMALL_SIZES);
-
-    memset(&entry->settings, 0, sizeof(entry->settings));
-    entry->settings.on_url = on_url;
-    entry->settings.on_body = on_body;
-    http_parser_init(&entry->parser, HTTP_REQUEST);
-
-    entry->parser.data =
-        MemoryContextAllocZero(entry->mcxt, sizeof(InfluxHttpRequestData));
-  }
+  else
+    InfluxHttpWorkerConnectioInit(entry);
 }
 
 /*
@@ -391,7 +463,7 @@ void InfluxHttpWorkerInitState(InfluxHttpWorkerState* state) {
   elog(LOG, "InfluxDB HTTP Worker listening on port %d", addr.sin_port);
 }
 
-InfluxHttpConnectionEntry* InfluxHttpWorkerGetConnection(
+InfluxHttpConnectionEntry* InfluxHttpWorkerConnectionFetch(
     InfluxHttpWorkerState* state, int fd) {
   if (state->http_connection_hash == NULL)
     return NULL;
@@ -399,7 +471,7 @@ InfluxHttpConnectionEntry* InfluxHttpWorkerGetConnection(
     return hash_search(state->http_connection_hash, &fd, HASH_FIND, NULL);
 }
 
-void InfluxHttpWorkerAcceptConnection(InfluxHttpWorkerState* state) {
+void InfluxHttpWorkerConnectionAccept(InfluxHttpWorkerState* state) {
   pgstat_report_activity(STATE_RUNNING, "accepting connections");
   while (1) {
     struct sockaddr_in addr;
@@ -430,7 +502,7 @@ void InfluxHttpWorkerAcceptConnection(InfluxHttpWorkerState* state) {
       continue;
     }
 
-    InfluxHttpWorkerAddConnection(state, fd);
+    InfluxHttpWorkerConnectionCreate(state, fd);
   }
 }
 
@@ -464,7 +536,7 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
         {"Connection", "close"},
     };
 
-    entry = InfluxHttpWorkerGetConnection(state, fd);
+    entry = InfluxHttpWorkerConnectionFetch(state, fd);
     if (entry == NULL) {
       elog(LOG, "entry for file descriptor %d not found", fd);
       break;
@@ -522,41 +594,45 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
          request.len,
          entry->parser.status_code);
 
-    if (entry->parser.status_code > 0) {
-      JsonbParseState* jbstate = NULL;
-      JsonbValue* result;
+    {
+      InfluxHttpRequestData* req_data = entry->parser.data;
 
-      (void)pushJsonbValue(&jbstate, WJB_BEGIN_OBJECT, NULL);
+      if (entry->parser.status_code > 0) {
+        JsonbParseState* jbstate = NULL;
+        JsonbValue* result;
 
-      InfluxJsonbAddKeyValue(&jbstate, "error", "endpoint does not exist");
+        (void)pushJsonbValue(&jbstate, WJB_BEGIN_OBJECT, NULL);
 
-      result = pushJsonbValue(&jbstate, WJB_END_OBJECT, NULL);
+        InfluxJsonbAddKeyValue(&jbstate, "error", "endpoint does not exist");
 
-      InfluxHttpWorkerSendErrorResponse(
-          state, fd, entry->parser.status_code, JsonbValueToJsonb(result));
-    } else if (parsed != request.len) {
-      JsonbParseState* jbstate = NULL;
-      JsonbValue* result;
+        result = pushJsonbValue(&jbstate, WJB_END_OBJECT, NULL);
 
-      (void)pushJsonbValue(&jbstate, WJB_BEGIN_OBJECT, NULL);
+        InfluxHttpWorkerSendErrorResponse(
+            state, fd, entry->parser.status_code, JsonbValueToJsonb(result));
+      } else if (parsed != request.len) {
+        JsonbParseState* jbstate = NULL;
+        JsonbValue* result;
 
-      InfluxJsonbAddKeyValue(
-          &jbstate,
-          "error",
-          http_errno_name(HTTP_PARSER_ERRNO(&entry->parser)));
-      InfluxJsonbAddKeyValue(
-          &jbstate,
-          "detail",
-          http_errno_description(HTTP_PARSER_ERRNO(&entry->parser)));
+        (void)pushJsonbValue(&jbstate, WJB_BEGIN_OBJECT, NULL);
 
-      result = pushJsonbValue(&jbstate, WJB_END_OBJECT, NULL);
+        InfluxJsonbAddKeyValue(
+            &jbstate,
+            "error",
+            http_errno_name(HTTP_PARSER_ERRNO(&entry->parser)));
+        InfluxJsonbAddKeyValue(
+            &jbstate,
+            "detail",
+            http_errno_description(HTTP_PARSER_ERRNO(&entry->parser)));
 
-      InfluxHttpWorkerSendErrorResponse(
-          state, fd, 400, JsonbValueToJsonb(result));
-    } else {
-      InfluxHttpWorkerSendResponse(
-          state, fd, 204, fields, sizeof(fields) / sizeof(*fields), NULL);
-      InfluxHttpWorkerDelConnection(state, fd);
+        result = pushJsonbValue(&jbstate, WJB_END_OBJECT, NULL);
+
+        InfluxHttpWorkerSendErrorResponse(
+            state, fd, 400, JsonbValueToJsonb(result));
+      } else if (req_data->complete) {
+        InfluxHttpWorkerSendResponse(
+            state, fd, 204, fields, sizeof(fields) / sizeof(*fields), NULL);
+        InfluxHttpWorkerConnectionDelete(state, fd);
+      }
     }
 
     /*
@@ -645,7 +721,7 @@ void InfluxHttpWorkerMain(Datum arg) {
     for (int i = 0; i < nfds; i++) {
       int fd = events[i].data.fd;
       if (fd == state.listen_fd)
-        InfluxHttpWorkerAcceptConnection(&state);
+        InfluxHttpWorkerConnectionAccept(&state);
       else
         InfluxHttpWorkerProcessData(&state, fd);
     }
