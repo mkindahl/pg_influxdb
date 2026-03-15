@@ -74,13 +74,16 @@ typedef struct InfluxHttpHeaderData {
 extern PGDLLEXPORT void InfluxHttpWorkerMain(Datum arg);
 
 extern void InfluxHttpWorkerInit(BackgroundWorker* worker);
-extern InfluxHttpConnectionEntry* InfluxHttpWorkerGetConnection(
-    InfluxHttpWorkerState* state, int fd);
-extern void InfluxHttpWorkerAcceptConnection(InfluxHttpWorkerState* state);
 extern void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd);
 extern void InfluxHttpWorkerInitState(InfluxHttpWorkerState* state);
-extern void InfluxHttpWorkerAddConnection(InfluxHttpWorkerState* state, int fd);
-extern void InfluxHttpWorkerDelConnection(InfluxHttpWorkerState* state, int fd);
+extern void InfluxHttpWorkerConnectionAccept(InfluxHttpWorkerState* state);
+extern void InfluxHttpWorkerConnectionCreate(InfluxHttpWorkerState* state,
+                                             int fd);
+extern void InfluxHttpWorkerConnectionDelete(InfluxHttpWorkerState* state,
+                                             int fd);
+extern void InfluxHttpWorkerConnectioInit(InfluxHttpConnectionEntry* entry);
+extern InfluxHttpConnectionEntry* InfluxHttpWorkerConnectionFetch(
+    InfluxHttpWorkerState* state, int fd);
 extern void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state,
                                          int fd, int status_code,
                                          const InfluxHttpHeaderData field[],
