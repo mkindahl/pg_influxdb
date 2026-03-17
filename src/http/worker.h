@@ -81,7 +81,7 @@ extern void InfluxHttpWorkerConnectionCreate(InfluxHttpWorkerState* state,
                                              int fd);
 extern void InfluxHttpWorkerConnectionDelete(InfluxHttpWorkerState* state,
                                              int fd);
-extern void InfluxHttpWorkerConnectioInit(InfluxHttpConnectionEntry* entry);
+extern void InfluxHttpWorkerConnectionInit(InfluxHttpConnectionEntry* entry);
 extern InfluxHttpConnectionEntry* InfluxHttpWorkerConnectionFetch(
     InfluxHttpWorkerState* state, int fd);
 extern void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state,
