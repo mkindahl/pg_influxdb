@@ -16,7 +16,7 @@
  * <https://www.gnu.org/licenses/>.
  */
 
-#include "http/worker.h"
+#include "worker.h"
 
 #include <postgres.h>
 
@@ -33,6 +33,7 @@
 #include <utils/jsonb.h>
 #include <utils/lsyscache.h>
 #include <utils/memutils.h>
+#include <utils/palloc.h>
 #include <utils/resowner.h>
 
 #include <errno.h>
@@ -48,11 +49,10 @@
 
 #include "config.h"
 #include "exec/insert.h"
-#include "http_parser.h"
+#include "http/http_parser.h"
 #include "influxdb.h"
 #include "network.h"
 #include "utils.h"
-#include "utils/palloc.h"
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -355,6 +355,16 @@ void InfluxHttpWorkerConnectionDelete(InfluxHttpWorkerState* state, int fd) {
   close(fd);
 }
 
+/*
+ * Function: extend_epoll_set
+ *
+ * Add a file descriptor to the epoll set.
+ *
+ * Parameters:
+ *
+ *    state - InfluxDB HTTP worker state
+ *    fd - file descriptor to add
+ */
 static void extend_epoll_set(InfluxHttpWorkerState* state, int fd) {
   struct epoll_event ev;
   ev.events = EPOLLIN;
@@ -374,7 +384,16 @@ static void extend_epoll_set(InfluxHttpWorkerState* state, int fd) {
                    state->epoll_fd));
 }
 
-void InfluxHttpWorkerConnectioInit(InfluxHttpConnectionEntry* entry) {
+/*
+ * Function: InfluxHttpWorkerConnectionInit
+ *
+ * Initialize a new connection entry.
+ *
+ * Parameters:
+ *
+ *    entry - connection entry to initialize
+ */
+void InfluxHttpWorkerConnectionInit(InfluxHttpConnectionEntry* entry) {
   MemoryContext oldcontext;
 
   entry->mcxt = AllocSetContextCreate(
@@ -432,6 +451,14 @@ void InfluxHttpWorkerConnectionCreate(InfluxHttpWorkerState* state, int fd) {
  * Function: InfluxHttpWorkerInitState
  *
  * Initialize the worker state.
+ *
+ * This includes setting up the listen socket and the epoll instance.
+ *
+ * The listen socket is added to the epoll instance so that we can wait for
+ * incoming connections.
+ *
+ * Parameters:
+ *   state - InfluxDB HTTP worker state to initialize
  */
 void InfluxHttpWorkerInitState(InfluxHttpWorkerState* state) {
   struct sockaddr_in addr;
@@ -463,6 +490,17 @@ void InfluxHttpWorkerInitState(InfluxHttpWorkerState* state) {
   elog(LOG, "InfluxDB HTTP Worker listening on port %d", addr.sin_port);
 }
 
+/*
+ * Function: InfluxHttpWorkerConnectionFetch
+ *
+ * Fetch the connection entry for a file descriptor, or NULL if it does
+ * not exist.
+ *
+ * Parameters:
+ *
+ *    state - InfluxDB HTTP worker state
+ *    fd - file descriptor for connection where data is read
+ */
 InfluxHttpConnectionEntry* InfluxHttpWorkerConnectionFetch(
     InfluxHttpWorkerState* state, int fd) {
   if (state->http_connection_hash == NULL)
@@ -471,6 +509,15 @@ InfluxHttpConnectionEntry* InfluxHttpWorkerConnectionFetch(
     return hash_search(state->http_connection_hash, &fd, HASH_FIND, NULL);
 }
 
+/*
+ * Function: InfluxHttpWorkerConnectionAccept
+ *
+ * Accept incoming connections and add them to the worker state.
+ *
+ * Parameters:
+ *
+ *    state - InfluxDB HTTP worker state
+ */
 void InfluxHttpWorkerConnectionAccept(InfluxHttpWorkerState* state) {
   pgstat_report_activity(STATE_RUNNING, "accepting connections");
   while (1) {
@@ -522,6 +569,7 @@ void InfluxHttpWorkerConnectionAccept(InfluxHttpWorkerState* state) {
 void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
   MemoryContext oldcontext = CurrentMemoryContext;
   ResourceOwner oldowner = CurrentResourceOwner;
+  volatile bool cleanup_connection = false;
   int err;
 
   pgstat_report_activity(STATE_RUNNING, "processing data");
@@ -554,8 +602,10 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
       elog(DEBUG1, "received %ld bytes on %d:\n%s", len, fd, buffer);
 
       /* If connection is shut down, we do not need to send a response. */
-      if (len == 0)
-        return;
+      if (len == 0) {
+        cleanup_connection = true;
+        break;
+      }
       /* If read data into the buffer, append it to the data to be read */
       else if (len > 0)
         appendBinaryStringInfo(&request, buffer, len);
@@ -567,6 +617,9 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
         ereport(
             ERROR, errcode_for_socket_access(), errmsg("recv call failed: %m"));
     }
+
+    if (cleanup_connection)
+      break;
 
     /* Once all data is read, we process it it and send a response. */
 
@@ -631,14 +684,10 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
       } else if (req_data->complete) {
         InfluxHttpWorkerSendResponse(
             state, fd, 204, fields, sizeof(fields) / sizeof(*fields), NULL);
-        InfluxHttpWorkerConnectionDelete(state, fd);
+        cleanup_connection = true;
       }
     }
 
-    /*
-     * We need to restore the memory context here. Both branches will
-     * delete the connection memory context.
-     */
     MemoryContextSwitchTo(oldcontext);
   }
   PG_CATCH();
@@ -664,6 +713,10 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
     InfluxHttpWorkerSendErrorResponse(state, fd, 400, edata_jb);
   }
   PG_END_TRY();
+
+  MemoryContextSwitchTo(oldcontext);
+  if (cleanup_connection && InfluxHttpWorkerConnectionFetch(state, fd) != NULL)
+    InfluxHttpWorkerConnectionDelete(state, fd);
 }
 
 /*
