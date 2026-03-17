@@ -245,8 +245,6 @@ void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state, int fd,
   time_t now = time(NULL);
   char buf[128];
 
-  Assert(content_type != NULL);
-
   initStringInfo(&response);
   appendStringInfo(&response,
                    "HTTP/1.1 %d %s\r\n",
@@ -415,10 +413,10 @@ void InfluxHttpWorkerConnectionInit(InfluxHttpConnectionEntry* entry) {
 }
 
 /*
- * Function: InfluxHttpWorkerConnectionAdd
+ * Function: InfluxHttpWorkerConnectionCreate
  *
- * Add a new connection to the state and set up the necessary
- * processing information.
+ * Create a new connection and add it to the state, setting up the
+ * necessary processing information.
  *
  * Parameters:
  *
@@ -444,7 +442,7 @@ void InfluxHttpWorkerConnectionCreate(InfluxHttpWorkerState* state, int fd) {
   if (found)
     elog(WARNING, "adding connection %d a second time, not changing state", fd);
   else
-    InfluxHttpWorkerConnectioInit(entry);
+    InfluxHttpWorkerConnectionInit(entry);
 }
 
 /*
