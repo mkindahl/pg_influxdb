@@ -278,10 +278,8 @@ void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state, int fd,
 
   appendStringInfoString(&response, "\r\n");
 
-  if (body) {
+  if (body)
     appendStringInfoString(&response, body);
-    appendStringInfoString(&response, "\r\n");
-  }
 
   elog(DEBUG1, "sending response:\n%s", response.data);
 
