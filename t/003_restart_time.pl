@@ -76,7 +76,7 @@ CREATE TRIGGER fatal_trigger
 END_OF_SQL
 
 # Check that we have a worker before in the correct state.
-print STDERR check_influxdb_workers($node, "postgres"), "\n";
+print STDERR check_influxdb_workers( $node, "postgres" ), "\n";
 
 # Trying to insert metrics on cpu table should generate a fatal
 # error. This will close the connection, hence result in an "undef"
@@ -85,16 +85,16 @@ $output = curl "http://localhost:$port/write?db=$schema", <<'END';
 cpu usage=1.22 1574753954000000000
 END
 
-is($output, '', "empty string as expected");
+is( $output, '', "empty string as expected" );
 
 # Check that we do not have a worker
-print STDERR check_influxdb_workers($node, "postgres"), "\n";
+print STDERR check_influxdb_workers( $node, "postgres" ), "\n";
 
 # Sleep until worker restarts, with some margin
 sleep(8);
 
 # Check that we have a worker now.
-print STDERR check_influxdb_workers($node, "postgres"), "\n";
+print STDERR check_influxdb_workers( $node, "postgres" ), "\n";
 
 $node->stop;
 

@@ -69,8 +69,7 @@ for my $i ( 1 .. 5 ) {
 select( undef, undef, undef, 0.5 );
 
 # The worker should still be alive and able to handle a normal request.
-test_endpoint "http://localhost:$port/write?db=$schema",
-  <<'END_OF_TEXT', NO_CONTENT;
+test_endpoint "http://localhost:$port/write?db=$schema", <<'END_OF_TEXT', NO_CONTENT;
 cpu usage=1.22 1574753954000000000
 END_OF_TEXT
 
