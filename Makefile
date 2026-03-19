@@ -23,6 +23,8 @@ OBJS = src/influxdb.o src/utils.o src/network.o src/debug.o $(OBJS_http) $(OBJS_
 
 VERSION_influxdb = $(shell perl -ne 'print "$$1" if /^default_version.*(\d+\.\d+)/' influxdb.control)
 
+PERL_FILES = $(wildcard t/*.pl perl/InfluxDB/*.pm perl/InfluxDB/Test/*.pm)
+
 EXTENSION = influxdb
 DATA_built = influxdb--$(VERSION_influxdb).sql
 PGFILEDESC = "influxdb - InfluxDB web interface to PostgreSQL"
@@ -38,6 +40,9 @@ include $(PGXS)
 
 influxdb--$(VERSION_influxdb).sql: influxdb.sql
 	cp $< $@
+
+format-perl:
+	perltidy $(PERL_FILES)
 
 src/protocol/tokenizer_lex.c src/protocol/tokenizer_lex.h: src/protocol/tokenizer_lex.l
 

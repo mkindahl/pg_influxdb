@@ -43,8 +43,7 @@ $node->safe_psql( "postgres", "CREATE EXTENSION influxdb" );
 # Test GET /ping returns 204 with X-Influxdb-Version header
 {
     my ( $stdin, $stdout, $stderr );
-    IPC::Run::run [ "curl", "-is", "http://localhost:$port/ping" ],
-      \$stdin, \$stdout, \$stderr;
+    IPC::Run::run [ "curl", "-is", "http://localhost:$port/ping" ], \$stdin, \$stdout, \$stderr;
     my $response = HTTP::Response->parse($stdout);
 
     is( $response->code, 204, "GET /ping returns 204" );
@@ -56,7 +55,7 @@ $node->safe_psql( "postgres", "CREATE EXTENSION influxdb" );
 {
     my ( $stdin, $stdout, $stderr );
     IPC::Run::run [ "curl", "-is", "--head", "http://localhost:$port/ping" ],
-      \$stdin, \$stdout, \$stderr;
+        \$stdin, \$stdout, \$stderr;
     my $response = HTTP::Response->parse($stdout);
 
     is( $response->code, 204, "HEAD /ping returns 204" );

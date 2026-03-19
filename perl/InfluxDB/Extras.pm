@@ -3,11 +3,11 @@ package InfluxDB::Extras;
 use parent 'Exporter';
 
 our @EXPORT_OK =
-  qw(trim curl is_response has_headers has_error test_endpoint NO_CONTENT BAD_REQUEST NOT_FOUND);
+    qw(trim curl is_response has_headers has_error test_endpoint NO_CONTENT BAD_REQUEST NOT_FOUND);
 our %EXPORT_TAGS = (
-    'constants' => [ 'NO_CONTENT', 'BAD_REQUEST', 'NOT_FOUND' ],
-    'utils'     => [ 'trim',       'curl' ],
-    'http' => [ 'is_response', 'has_headers', 'has_error', 'test_endpoint' ],
+    'constants' => [ 'NO_CONTENT',  'BAD_REQUEST', 'NOT_FOUND' ],
+    'utils'     => [ 'trim',        'curl' ],
+    'http'      => [ 'is_response', 'has_headers', 'has_error', 'test_endpoint' ],
 );
 
 use Test::More;
@@ -72,7 +72,7 @@ sub test_endpoint {
     my @headers  = ( 'Date', 'Connection' );
     my $json     = decode_json( $response->content ) if $response->content;
     my $errmsg   = "generated error '" . $json->{'error'} . "'"
-      if $response->content;
+        if $response->content;
 
     $tb->ok( all { $response->header($_) } @headers );
     $tb->is_eq( $response->message, $reason, $errmsg );
@@ -93,7 +93,6 @@ sub has_error {
 
 my %seen;
 
-push @{ $EXPORT_TAGS{all} }, grep { !$seen{$_}++ } @{ $EXPORT_TAGS{$_} }
-  foreach keys %EXPORT_TAGS;
+push @{ $EXPORT_TAGS{all} }, grep { !$seen{$_}++ } @{ $EXPORT_TAGS{$_} } foreach keys %EXPORT_TAGS;
 
 1;

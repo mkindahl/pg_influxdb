@@ -1,0 +1,24 @@
+name: Code Style Check
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  perltidy:
+    name: Check Perl Code Style with perltidy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install perltidy
+        run: sudo apt-get update && sudo apt-get install -y perltidy
+      - name: Compare perltidy formatting options
+        run: diff <(perltidy -dop) .github/perltidy-options.txt
+      - name: Show perl files
+        run: find . -name '*.p[lm]' -ls
+      - name: Run perltidy
+        run: make format-perl
+      - name: Check for formatting differences
+        run: git diff --exit-code
