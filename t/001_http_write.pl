@@ -60,23 +60,21 @@ disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 157475
 END_OF_TEXT
 
 # Check that we get a proper response on a syntax error
-test_endpoint "http://localhost:$port/write",
-  <<'END_OF_TEXT', BAD_REQUEST, $syntax_error;
+test_endpoint "http://localhost:$port/write", <<'END_OF_TEXT', BAD_REQUEST, $syntax_error;
 cpu,usage=12 1574753954000000000
 END_OF_TEXT
 
 # Check that when trying to insert into a measurement that does not
 # exist generates an error.
 test_endpoint "http://localhost:$port/write?db=$schema",
-  <<'END_OF_TEXT', BAD_REQUEST, $table_missing;
+    <<'END_OF_TEXT', BAD_REQUEST, $table_missing;
 cpu usage=1.22 1574753954000000000
 END_OF_TEXT
 
 # Check that we can write data through the endpoint and get the right
 # result. Note that this involves lines that do not have a timestamp,
 # and these should be added but will have the server timestamp.
-test_endpoint "http://localhost:$port/write?db=$schema",
-  <<'END_OF_TEXT', NO_CONTENT;
+test_endpoint "http://localhost:$port/write?db=$schema", <<'END_OF_TEXT', NO_CONTENT;
 disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574753954000000000
 disk,mode=rw,path=/boot/efi free=527807775i,total=1000i,used_percent=1.12
 disk,mode=rw,path=/boot/efi free=527808830i,total=2000i,used_percent=1.11 1574753974000000000
@@ -104,8 +102,7 @@ is( $result, $expected );
 
 # Check that write endpoint is handled correctly even when we have
 # unrecognized parameters in the URL.
-test_endpoint "http://localhost:$port/write?db=metrics&m=m",
-  <<'END_OF_TEXT', NO_CONTENT;
+test_endpoint "http://localhost:$port/write?db=metrics&m=m", <<'END_OF_TEXT', NO_CONTENT;
 disk,mode=rw,path=/boot/efi free=527806464i,total=0000i,used_percent=1.49 1574853954000000000
 disk,mode=rw,path=/boot/efi free=527807775i,total=1000i,used_percent=1.12 1574853964000000000
 END_OF_TEXT
@@ -134,13 +131,12 @@ for my $cnt ( 0 .. 100 ) {
     my $total     = 1024 * 1024 - $free;
     my $timestamp = 1574853954000000000 + 1000 * $cnt;
     push @lines,
-"disk,mode=rw,path=/boot/efi free=${free}i,total=${total}i,used_percent=1.49 $timestamp";
+        "disk,mode=rw,path=/boot/efi free=${free}i,total=${total}i,used_percent=1.49 $timestamp";
 }
 
 my $content = join "\n", @lines;
 
-cmp_ok( length($content), ">", 8 * 1024,
-    "length " . length($content) . " is greater than 8 KiB" );
+cmp_ok( length($content), ">", 8 * 1024, "length " . length($content) . " is greater than 8 KiB" );
 
 test_endpoint "http://localhost:$port/write?db=metrics", $content, NO_CONTENT;
 
@@ -152,8 +148,7 @@ END_OF_TEXT
 
 # Test precision=s (second-precision timestamps)
 # 1574753954 seconds = 2019-11-26 07:39:14 UTC
-test_endpoint "http://localhost:$port/write?db=$schema&precision=s",
-  <<'END_OF_TEXT', NO_CONTENT;
+test_endpoint "http://localhost:$port/write?db=$schema&precision=s", <<'END_OF_TEXT', NO_CONTENT;
 cpu,host=server01 usage_idle=99.5 1574753954
 END_OF_TEXT
 
@@ -171,8 +166,7 @@ is( $result, $expected, "precision=s produces correct timestamp" );
 
 # Test precision=ms (millisecond-precision timestamps)
 # 1574753964000 ms = 2019-11-26 07:39:24 UTC
-test_endpoint "http://localhost:$port/write?db=$schema&precision=ms",
-  <<'END_OF_TEXT', NO_CONTENT;
+test_endpoint "http://localhost:$port/write?db=$schema&precision=ms", <<'END_OF_TEXT', NO_CONTENT;
 cpu,host=server02 usage_idle=88.3 1574753964000
 END_OF_TEXT
 
@@ -190,8 +184,7 @@ is( $result, $expected, "precision=ms produces correct timestamp" );
 
 # Test precision=us (microsecond-precision timestamps)
 # 1574753974000000 us = 2019-11-26 07:39:34 UTC
-test_endpoint "http://localhost:$port/write?db=$schema&precision=us",
-  <<'END_OF_TEXT', NO_CONTENT;
+test_endpoint "http://localhost:$port/write?db=$schema&precision=us", <<'END_OF_TEXT', NO_CONTENT;
 cpu,host=server03 usage_idle=77.1 1574753974000000
 END_OF_TEXT
 
@@ -209,8 +202,7 @@ is( $result, $expected, "precision=us produces correct timestamp" );
 
 # Test no precision param (default = nanoseconds, backward compat)
 # 1574753984000000000 ns = 2019-11-26 07:39:44 UTC
-test_endpoint "http://localhost:$port/write?db=$schema",
-  <<'END_OF_TEXT', NO_CONTENT;
+test_endpoint "http://localhost:$port/write?db=$schema", <<'END_OF_TEXT', NO_CONTENT;
 cpu,host=server04 usage_idle=66.2 1574753984000000000
 END_OF_TEXT
 
@@ -227,8 +219,7 @@ END_OF_TEXT
 is( $result, $expected, "no precision param defaults to nanoseconds" );
 
 # Test precision=ns explicitly produces same result as no precision
-test_endpoint "http://localhost:$port/write?db=$schema&precision=ns",
-  <<'END_OF_TEXT', NO_CONTENT;
+test_endpoint "http://localhost:$port/write?db=$schema&precision=ns", <<'END_OF_TEXT', NO_CONTENT;
 cpu,host=server05 usage_idle=55.0 1574753994000000000
 END_OF_TEXT
 
@@ -246,7 +237,7 @@ is( $result, $expected, "precision=ns same as default" );
 
 # Test invalid precision returns 400 Bad Request
 test_endpoint "http://localhost:$port/write?db=$schema&precision=xyz",
-  <<'END_OF_TEXT', BAD_REQUEST, $invalid_precision;
+    <<'END_OF_TEXT', BAD_REQUEST, $invalid_precision;
 cpu,host=server06 usage_idle=44.0 1574753954
 END_OF_TEXT
 

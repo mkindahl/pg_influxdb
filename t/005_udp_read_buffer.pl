@@ -62,7 +62,7 @@ END_OF_TEXT
 
     $node->start;
 
-    my $log = $node->logfile;
+    my $log         = $node->logfile;
     my $logcontents = slurp_file($log);
     like(
         $logcontents,
@@ -95,7 +95,7 @@ END_OF_TEXT
 
     $node->start;
 
-    my $log = $node->logfile;
+    my $log         = $node->logfile;
     my $logcontents = slurp_file($log);
     like(
         $logcontents,
@@ -134,15 +134,12 @@ CREATE SCHEMA $schema;
 CREATE TABLE $schema.cpu(_time timestamp, _tags jsonb, _fields jsonb);
 END_OF_TEXT
 
-    send_udp( $udp_port,
-        "cpu,host=server01 value=0.64 1574753954000000000\n" );
+    send_udp( $udp_port, "cpu,host=server01 value=0.64 1574753954000000000\n" );
 
     usleep(500_000);
 
-    my $result = $node->safe_psql( "postgres",
-        "SELECT count(*) FROM $schema.cpu" );
-    is( $result, '1',
-        'data point inserted with very small udp_read_buffer (1kB)' );
+    my $result = $node->safe_psql( "postgres", "SELECT count(*) FROM $schema.cpu" );
+    is( $result, '1', 'data point inserted with very small udp_read_buffer (1kB)' );
 
     $node->stop;
 }
@@ -175,15 +172,12 @@ CREATE SCHEMA $schema;
 CREATE TABLE $schema.cpu(_time timestamp, _tags jsonb, _fields jsonb);
 END_OF_TEXT
 
-    send_udp( $udp_port,
-        "cpu,host=server01 value=0.64 1574753954000000000\n" );
+    send_udp( $udp_port, "cpu,host=server01 value=0.64 1574753954000000000\n" );
 
     usleep(500_000);
 
-    my $result = $node->safe_psql( "postgres",
-        "SELECT count(*) FROM $schema.cpu" );
-    is( $result, '1',
-        'data point inserted with udp_read_buffer = 0 (OS default)' );
+    my $result = $node->safe_psql( "postgres", "SELECT count(*) FROM $schema.cpu" );
+    is( $result, '1', 'data point inserted with udp_read_buffer = 0 (OS default)' );
 
     $node->stop;
 }

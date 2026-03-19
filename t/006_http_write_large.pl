@@ -52,17 +52,16 @@ for my $cnt ( 0 .. 999 ) {
     my $total     = 1024 * 1024 - $free;
     my $timestamp = 1574853954000000000 + 1000000000 * $cnt;
     push @lines,
-"disk,mode=rw,path=/boot/efi free=${free}i,total=${total}i,used_percent=1.49 $timestamp";
+        "disk,mode=rw,path=/boot/efi free=${free}i,total=${total}i,used_percent=1.49 $timestamp";
 }
 
 # Test 1: Large body with trailing newline
 my $content_with_newline = join( "\n", @lines ) . "\n";
 
-cmp_ok( length($content_with_newline), ">", 64 * 1024,
-    "payload with trailing newline is larger than 64 KiB" );
+cmp_ok( length($content_with_newline),
+    ">", 64 * 1024, "payload with trailing newline is larger than 64 KiB" );
 
-test_endpoint "http://localhost:$port/write?db=$schema",
-  $content_with_newline, NO_CONTENT;
+test_endpoint "http://localhost:$port/write?db=$schema", $content_with_newline, NO_CONTENT;
 
 is( $node->safe_psql( "postgres", "SELECT count(*) FROM $schema.disk" ),
     1000, "large body with trailing newline inserts all 1000 rows" );
@@ -74,11 +73,10 @@ $node->safe_psql( "postgres", "TRUNCATE $schema.disk" );
 # on_message_complete remainder flush)
 my $content_no_newline = join( "\n", @lines );
 
-cmp_ok( length($content_no_newline), ">", 64 * 1024,
-    "payload without trailing newline is larger than 64 KiB" );
+cmp_ok( length($content_no_newline),
+    ">", 64 * 1024, "payload without trailing newline is larger than 64 KiB" );
 
-test_endpoint "http://localhost:$port/write?db=$schema",
-  $content_no_newline, NO_CONTENT;
+test_endpoint "http://localhost:$port/write?db=$schema", $content_no_newline, NO_CONTENT;
 
 is( $node->safe_psql( "postgres", "SELECT count(*) FROM $schema.disk" ),
     1000, "large body without trailing newline inserts all 1000 rows" );
