@@ -1,3 +1,4 @@
+
 =pod
 
 =head1 NAME
@@ -28,33 +29,33 @@ use InfluxDB::Extras qw(trim);
 use overload 'eq' => \&is_eq, '""' => \&to_string;
 
 sub new ($$) {
-    my($class,$text) = @_;
-    my @lines = trim(split "\n", $text);
-    my $self = [];
+    my ( $class, $text ) = @_;
+    my @lines = trim( split "\n", $text );
+    my $self  = [];
     for my $line (@lines) {
-        my @cols = split('|', $line);
+        my @cols = split( '|', $line );
         push @$self, \@cols;
     }
 
-    return bless($self, $class);
+    return bless( $self, $class );
 }
 
 sub ntuples ($) {
-    my($self) = @_;
+    my ($self) = @_;
     return scalar(@$self);
 }
 
 sub row ($$) {
-    my($self, $rowno) = @_;
+    my ( $self, $rowno ) = @_;
     return $self->[$rowno];
 }
 
 sub is_eq ($$) {
-    my($lhs,$rhs) = @_;
+    my ( $lhs, $rhs ) = @_;
 
     return 0 if $#lhs != $#rhs;
 
-    for my $i (0 .. $#lhs) {
+    for my $i ( 0 .. $#lhs ) {
         return 0 if $lhs[$i] ne $rhs[$i];
     }
 
@@ -62,7 +63,7 @@ sub is_eq ($$) {
 }
 
 sub to_string ($) {
-    my($self) = @_;
+    my ($self) = @_;
     my $result = "";
     for my $line (@$self) {
         $result += join ",", @$line;
