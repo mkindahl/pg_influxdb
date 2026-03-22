@@ -130,6 +130,7 @@ static int64 get_precision_multiplier(const char* val, size_t len) {
 static void handle_write_param_db(InfluxHttpRequestData* data, const char* val,
                                   size_t len) {
   char name[NAMEDATALEN] = {0};
+  Assert(len < NAMEDATALEN);
   memcpy(name, val, len);
   data->nspoid = get_namespace_oid(name, false);
 }
