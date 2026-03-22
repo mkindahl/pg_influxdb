@@ -53,6 +53,7 @@
 #include "config.h"
 #include "exec/insert.h"
 #include "http/http_parser.h"
+#include "http/params.h"
 #include "influxdb.h"
 #include "network.h"
 #include "utils.h"
@@ -61,46 +62,6 @@
 #include <netinet/in.h>
 
 #define BUFFER_SIZE (8 * 1024)
-
-#define STR_LIT(str) str, sizeof(str) - 1
-
-/*
- * Enum: State for an HTTP worker connection.
- */
-typedef enum InfluxHttpRequestType {
-  OPERATION_UNDEF,
-  OPERATION_WRITE,
-  OPERATION_PING,
-} InfluxHttpRequestType;
-
-/*
- * Struct: State for an HTTP worker connection.
- */
-typedef enum InfluxHttpHeaderState {
-  HEADER_STATE_NONE,
-  HEADER_STATE_CONTENT_ENCODING,
-  HEADER_STATE_AUTHORIZATION,
-} InfluxHttpHeaderState;
-
-/*
- * Struct: Data for an InfluxDB HTTP request.
- */
-typedef struct InfluxHttpRequestData {
-  MemoryContext mcxt; /* Memory context for this request's allocations */
-  InfluxHttpRequestType type; /* Endpoint type, e.g, a write endpoint */
-  Oid nspoid;                 /* Namespace OID for the "database" */
-  int64
-      precision_multiplier; /* Timestamp precision multiplier to nanoseconds */
-  const char* error;        /* Error message for the client, or NULL */
-  bool complete;            /* Set by on_message_complete callback */
-  bool is_gzip;             /* Content-Encoding: gzip */
-  StringInfo remaining;     /* Leftover partial line from on_body */
-  InfluxHttpHeaderState header_state; /* Which header we're currently parsing */
-  bool auth_failed;                   /* Auth check failed */
-  char* auth_header;                  /* Authorization header value */
-  char* query_user;                   /* u= query parameter */
-  char* query_pass;                   /* p= query parameter */
-} InfluxHttpRequestData;
 
 static void HttpWorkerInsertMeasurements(Oid nspid, const char* buf,
                                          size_t buflen,
@@ -112,111 +73,6 @@ static void HttpWorkerInsertMeasurements(Oid nspid, const char* buf,
   pgstat_report_activity(STATE_IDLE, NULL);
 }
 
-static struct {
-  const char* precision;
-  size_t length;
-  int64 multiplier;
-} multipliers[] = {
-    {STR_LIT("ns"), 1},
-    {STR_LIT("us"), 1000L},
-    {STR_LIT("ms"), 1000000L},
-    {STR_LIT("s"), 1000000000L},
-    {STR_LIT("m"), 60L * 1000000000L},
-    {STR_LIT("h"), 60L * 60L * 1000000000L},
-};
-
-static int64 get_precision_multiplier(const char* val, size_t len) {
-  for (int i = 0; i < lengthof(multipliers); ++i) {
-    if (multipliers[i].length == len &&
-        strncmp(val, multipliers[i].precision, len) == 0)
-      return multipliers[i].multiplier;
-  }
-
-  return -1;
-}
-
-static void handle_write_param_db(InfluxHttpRequestData* data, const char* val,
-                                  size_t len) {
-  char name[NAMEDATALEN] = {0};
-  Assert(len < NAMEDATALEN);
-  memcpy(name, val, len);
-  data->nspoid = get_namespace_oid(name, false);
-}
-
-static void handle_write_param_precision(InfluxHttpRequestData* data,
-                                         const char* val, size_t len) {
-  data->precision_multiplier = get_precision_multiplier(val, len);
-}
-
-static void handle_write_param_user(InfluxHttpRequestData* data,
-                                    const char* val, size_t len) {
-  MemoryContext oldcontext = MemoryContextSwitchTo(data->mcxt);
-  data->query_user = pnstrdup(val, len);
-  MemoryContextSwitchTo(oldcontext);
-}
-
-static void handle_write_param_pass(InfluxHttpRequestData* data,
-                                    const char* val, size_t len) {
-  MemoryContext oldcontext = MemoryContextSwitchTo(data->mcxt);
-  data->query_pass = pnstrdup(val, len);
-  MemoryContextSwitchTo(oldcontext);
-}
-
-static struct {
-  const char* param;
-  size_t length;
-  void (*cmd)(InfluxHttpRequestData* data, const char* val, size_t len);
-} params[] = {
-    {STR_LIT("db"), handle_write_param_db},
-    {STR_LIT("precision"), handle_write_param_precision},
-    {STR_LIT("u"), handle_write_param_user},
-    {STR_LIT("p"), handle_write_param_pass},
-};
-
-static void handle_write_param(InfluxHttpRequestData* data, const char* key,
-                               const char* val, const char* endptr) {
-  const size_t keylen = (val - 1) - key;
-  const size_t vallen = endptr - val;
-  for (int i = 0; i < lengthof(params); ++i)
-    if (params[i].length == keylen &&
-        strncmp(key, params[i].param, keylen) == 0)
-      return (*params[i].cmd)(data, val, vallen);
-}
-
-static void parse_write_params(InfluxHttpRequestData* data, const char* start) {
-  const char* key = start + 1;
-  const char* val = NULL;
-  const char* ptr;
-
-  /* If it doesn't start with a '?', there are no parameters */
-  if (*start != '?')
-    return;
-
-  /* From RFC 3986 3.4:
-   *
-   *   The query component is indicated by the first question mark
-   *   ("?")  character and terminated by a number sign ("#")
-   *   character or by the end of the URI.
-   *
-   * Here the query component will start after the question mark and
-   * end with the first space (which is followed by the HTTP version).
-   */
-  for (ptr = start + 1; *ptr != '#' && *ptr != ' '; ++ptr) {
-    if (*ptr == '=') {
-      val = ptr + 1;
-    } else if (*ptr == '&') {
-      Assert(val != NULL && key != NULL);
-      handle_write_param(data, key, val, ptr);
-      key = ptr + 1; /* Start of next key */
-      val = NULL;    /* The value does not exist here */
-    }
-  }
-
-  /* Handle last parameter, if there were one */
-  if (val)
-    handle_write_param(data, key, val, ptr);
-}
-
 /*
  * Function: on_url_write
  * Description: Handles URL parsing for the write operation.
@@ -225,7 +81,7 @@ static int on_url_write(http_parser* parser, InfluxHttpRequestData* data,
                         const char* params) {
   data->type = OPERATION_WRITE;
   data->precision_multiplier = 1; /* default: nanoseconds */
-  parse_write_params(data, params);
+  InfluxParseParams(data, params, InfluxWriteParamHandler);
   if (data->precision_multiplier < 0) {
     data->error =
         "invalid precision; valid precision units are ns, us, ms, and s";

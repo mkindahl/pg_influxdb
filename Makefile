@@ -15,7 +15,7 @@
 # <https://www.gnu.org/licenses/>.
 
 MODULE_big = influxdb
-OBJS_http = src/http/http_parser.o src/http/worker.o
+OBJS_http = src/http/http_parser.o src/http/params.o src/http/worker.o
 OBJS_udp = src/udp/worker.o
 OBJS_proto = src/proto/tokenizer_lex.o src/proto/parser.o
 OBJS_exec = src/exec/plans.o src/exec/insert.o src/exec/table.o
@@ -46,20 +46,22 @@ format-perl:
 
 src/protocol/tokenizer_lex.c src/protocol/tokenizer_lex.h: src/protocol/tokenizer_lex.l
 
-parser.o: src/proto/parser.c src/proto/parser.h
-tokenizer_lex.o: src/proto/tokenizer_lex.c src/proto/parser.h \
+src/proto/parser.o: src/proto/parser.c src/proto/parser.h
+src/proto/tokenizer_lex.o: src/proto/tokenizer_lex.c src/proto/parser.h \
  src/influxdb.h
-worker.o: src/http/worker.c src/http/worker.h src/http/http_parser.h \
+src/http/worker.o: src/http/worker.c src/http/worker.h src/http/http_parser.h \
  src/config.h src/http/http_parser.h src/influxdb.h src/network.h \
  src/utils.h
-http_parser.o: src/http/http_parser.c src/http/http_parser.h
-plans.o: src/exec/plans.c src/exec/plans.h
-table.o: src/exec/table.c src/exec/table.h src/proto/parser.h
-insert.o: src/exec/insert.c src/exec/insert.h src/proto/parser.h \
+src/http/http_parser.o: src/http/http_parser.c src/http/http_parser.h
+src/http/params.o: src/http/params.c src/http/params.h src/config.h src/influxdb.h \
+ src/utils.h
+src/exec/plans.o: src/exec/plans.c src/exec/plans.h
+src/exec/table.o: src/exec/table.c src/exec/table.h src/proto/parser.h
+src/exec/insert.o: src/exec/insert.c src/exec/insert.h src/proto/parser.h \
  src/influxdb.h src/exec/plans.h src/exec/table.h
-udp_worker.o: src/udp/worker.c src/udp/worker.h src/config.h \
+src/udp/worker.o: src/udp/worker.c src/udp/worker.h src/config.h \
  src/influxdb.h src/network.h src/exec/insert.h
-influxdb.o: src/influxdb.c src/influxdb.h src/config.h src/http/worker.h \
+src/influxdb.o: src/influxdb.c src/influxdb.h src/config.h src/http/worker.h \
  src/http/http_parser.h src/udp/worker.h
 network.o: src/network.c src/network.h
 utils.o: src/utils.c src/utils.h

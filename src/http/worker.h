@@ -71,6 +71,44 @@ typedef struct InfluxHttpHeaderData {
   const char* value;
 } InfluxHttpHeaderData;
 
+/*
+ * Enum: State for an HTTP worker connection.
+ */
+typedef enum InfluxHttpRequestType {
+  OPERATION_UNDEF,
+  OPERATION_WRITE,
+  OPERATION_PING,
+} InfluxHttpRequestType;
+
+/*
+ * Enum: State for an HTTP worker connection.
+ */
+typedef enum InfluxHttpHeaderState {
+  HEADER_STATE_NONE,
+  HEADER_STATE_CONTENT_ENCODING,
+  HEADER_STATE_AUTHORIZATION,
+} InfluxHttpHeaderState;
+
+/*
+ * Struct: Data for an InfluxDB HTTP request.
+ */
+typedef struct InfluxHttpRequestData {
+  MemoryContext mcxt; /* Memory context for this request's allocations */
+  InfluxHttpRequestType type; /* Endpoint type, e.g, a write endpoint */
+  Oid nspoid;                 /* Namespace OID for the "database" */
+  int64
+      precision_multiplier; /* Timestamp precision multiplier to nanoseconds */
+  const char* error;        /* Error message for the client, or NULL */
+  bool complete;            /* Set by on_message_complete callback */
+  bool is_gzip;             /* Content-Encoding: gzip */
+  StringInfo remaining;     /* Leftover partial line from on_body */
+  InfluxHttpHeaderState header_state; /* Which header we're currently parsing */
+  bool auth_failed;                   /* Auth check failed */
+  char* auth_header;                  /* Authorization header value */
+  char* query_user;                   /* u= query parameter */
+  char* query_pass;                   /* p= query parameter */
+} InfluxHttpRequestData;
+
 extern PGDLLEXPORT void InfluxHttpWorkerMain(Datum arg);
 
 extern void InfluxHttpWorkerInit(BackgroundWorker* worker);
