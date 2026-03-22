@@ -52,6 +52,7 @@ char* influxdb_http_service = INFLUXDB_DEFAULT_HTTP_SERVICE;
 char* influxdb_database = NULL;
 int influxdb_http_workers = 4;
 int influxdb_http_worker_restart_time = INFLUXDB_DEFAULT_HTTP_RESTART_TIME;
+bool influxdb_http_auth = false;
 
 char* influxdb_udp_service = INFLUXDB_DEFAULT_UDP_SERVICE;
 char* influxdb_udp_schema = INFLUXDB_DEFAULT_SCHEMA_NAME;
@@ -145,6 +146,20 @@ void _PG_init(void) {
       NULL,                               /* check hook */
       NULL,                               /* assign hook */
       NULL);                              /* show hook */
+
+  DefineCustomBoolVariable(
+      "influxdb.http_auth",
+      "Enable HTTP Basic Auth using PostgreSQL roles.",
+      "When enabled, HTTP requests must provide credentials that match "
+      "a PostgreSQL role in pg_authid. Credentials can be provided via "
+      "the Authorization header or u=/p= query parameters.",
+      &influxdb_http_auth,
+      false,          /* boot value */
+      PGC_POSTMASTER, /* option context */
+      0,              /* option flags */
+      NULL,           /* check hook */
+      NULL,           /* assign hook */
+      NULL);          /* show hook */
 
   DefineCustomStringVariable(
       "influxdb.udp_service",
