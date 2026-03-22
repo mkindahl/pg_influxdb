@@ -22,7 +22,9 @@
 
 #include <access/xact.h>
 #include <catalog/namespace.h>
+#include <common/base64.h>
 #include <executor/spi.h>
+#include <libpq/crypt.h>
 #include <pgstat.h>
 #include <postmaster/bgworker.h>
 #include <postmaster/interrupt.h>
@@ -77,12 +79,14 @@ typedef enum InfluxHttpRequestType {
 typedef enum InfluxHttpHeaderState {
   HEADER_STATE_NONE,
   HEADER_STATE_CONTENT_ENCODING,
+  HEADER_STATE_AUTHORIZATION,
 } InfluxHttpHeaderState;
 
 /*
  * Struct: Data for an InfluxDB HTTP request.
  */
 typedef struct InfluxHttpRequestData {
+  MemoryContext mcxt; /* Memory context for this request's allocations */
   InfluxHttpRequestType type; /* Endpoint type, e.g, a write endpoint */
   Oid nspoid;                 /* Namespace OID for the "database" */
   int64
@@ -90,8 +94,12 @@ typedef struct InfluxHttpRequestData {
   const char* error;        /* Error message for the client, or NULL */
   bool complete;            /* Set by on_message_complete callback */
   bool is_gzip;             /* Content-Encoding: gzip */
-  StringInfoData remaining; /* Leftover partial line from on_body */
+  StringInfo remaining;     /* Leftover partial line from on_body */
   InfluxHttpHeaderState header_state; /* Which header we're currently parsing */
+  bool auth_failed;                   /* Auth check failed */
+  char* auth_header;                  /* Authorization header value */
+  char* query_user;                   /* u= query parameter */
+  char* query_pass;                   /* p= query parameter */
 } InfluxHttpRequestData;
 
 static void HttpWorkerInsertMeasurements(Oid nspid, const char* buf,
@@ -140,6 +148,20 @@ static void handle_write_param_precision(InfluxHttpRequestData* data,
   data->precision_multiplier = get_precision_multiplier(val, len);
 }
 
+static void handle_write_param_user(InfluxHttpRequestData* data,
+                                    const char* val, size_t len) {
+  MemoryContext oldcontext = MemoryContextSwitchTo(data->mcxt);
+  data->query_user = pnstrdup(val, len);
+  MemoryContextSwitchTo(oldcontext);
+}
+
+static void handle_write_param_pass(InfluxHttpRequestData* data,
+                                    const char* val, size_t len) {
+  MemoryContext oldcontext = MemoryContextSwitchTo(data->mcxt);
+  data->query_pass = pnstrdup(val, len);
+  MemoryContextSwitchTo(oldcontext);
+}
+
 static struct {
   const char* param;
   size_t length;
@@ -147,6 +169,8 @@ static struct {
 } params[] = {
     {STR_LIT("db"), handle_write_param_db},
     {STR_LIT("precision"), handle_write_param_precision},
+    {STR_LIT("u"), handle_write_param_user},
+    {STR_LIT("p"), handle_write_param_pass},
 };
 
 static void handle_write_param(InfluxHttpRequestData* data, const char* key,
@@ -254,7 +278,10 @@ static struct {
   const char* hdr;
   size_t len;
   InfluxHttpHeaderState header_state;
-} headers[] = {{"Content-Encoding", 16, HEADER_STATE_CONTENT_ENCODING}};
+} headers[] = {
+    {"Content-Encoding", 16, HEADER_STATE_CONTENT_ENCODING},
+    {"Authorization", 13, HEADER_STATE_AUTHORIZATION},
+};
 
 static int on_header_field(http_parser* parser, const char* at, size_t length) {
   InfluxHttpRequestData* data = parser->data;
@@ -268,9 +295,19 @@ static int on_header_field(http_parser* parser, const char* at, size_t length) {
 
 static int on_header_value(http_parser* parser, const char* at, size_t length) {
   InfluxHttpRequestData* data = parser->data;
-  if (data->header_state == HEADER_STATE_CONTENT_ENCODING) {
-    if (length == 4 && strncasecmp(at, "gzip", 4) == 0)
-      data->is_gzip = true;
+  switch (data->header_state) {
+    case HEADER_STATE_CONTENT_ENCODING:
+      if (length == 4 && strncasecmp(at, "gzip", 4) == 0)
+        data->is_gzip = true;
+      break;
+    case HEADER_STATE_AUTHORIZATION: {
+      MemoryContext oldcontext = MemoryContextSwitchTo(data->mcxt);
+      data->auth_header = pnstrdup(at, length);
+      MemoryContextSwitchTo(oldcontext);
+      break;
+    }
+    default:
+      break;
   }
   data->header_state = HEADER_STATE_NONE;
   return 0;
@@ -320,6 +357,105 @@ static bool inflate_gzip(const char* src, size_t srclen, char** dst,
   return true;
 }
 
+/*
+ * Verify a plaintext username/password against pg_authid.
+ *
+ * Uses get_role_password() to fetch the stored password hash and
+ * plain_crypt_verify() to check the plaintext password against it.
+ * This handles both MD5 and SCRAM-SHA-256 hashed passwords.
+ *
+ * Must be called within a transaction since get_role_password()
+ * accesses the pg_authid system catalog.
+ *
+ * The shadow password returned by get_role_password() is allocated in
+ * the current memory context (the SPI context), which is short-lived
+ * and cleaned up when the transaction commits, so we do not free it
+ * explicitly.
+ */
+static bool verify_role_password(const char* username, const char* password) {
+  const char* logdetail = NULL;
+  char* shadow_pass;
+
+  shadow_pass = get_role_password(username, &logdetail);
+  if (shadow_pass == NULL) {
+    elog(DEBUG1,
+         "auth failed for user \"%s\": %s",
+         username,
+         logdetail ? logdetail : "unknown reason");
+    return false;
+  }
+
+  if (plain_crypt_verify(username, shadow_pass, password, &logdetail) !=
+      STATUS_OK) {
+    elog(DEBUG1,
+         "auth failed for user \"%s\": %s",
+         username,
+         logdetail ? logdetail : "password mismatch");
+    return false;
+  }
+
+  return true;
+}
+
+/*
+ * Check HTTP Basic Auth credentials against PostgreSQL roles.
+ * Returns true if auth passes (or auth is not enabled).
+ */
+static bool check_auth(InfluxHttpRequestData* data) {
+  const char basic_prefix[] = "Basic ";
+  size_t encoded_len;
+  char* decoded;
+  int decoded_len;
+  char* colon;
+
+  /* If auth is not enabled, allow all */
+  if (!influxdb_http_auth)
+    return true;
+
+  /* Check query parameters first (u= and p=) */
+  if (data->query_user != NULL)
+    return verify_role_password(data->query_user,
+                                data->query_pass ? data->query_pass : "");
+
+  /* Check Authorization header */
+  if (data->auth_header == NULL)
+    return false;
+
+  if (strncmp(data->auth_header, basic_prefix, sizeof(basic_prefix) - 1) != 0)
+    return false;
+
+  encoded_len = strlen(data->auth_header) - (sizeof(basic_prefix) - 1);
+  decoded = palloc(encoded_len + 1);
+
+  decoded_len = pg_b64_decode(data->auth_header + sizeof(basic_prefix) - 1,
+                              encoded_len,
+                              (uint8*)decoded,
+                              encoded_len + 1);
+
+  if (decoded_len < 0)
+    return false;
+
+  decoded[decoded_len] = '\0';
+
+  colon = strchr(decoded, ':');
+  if (colon == NULL)
+    return false;
+
+  *colon = '\0';
+
+  return verify_role_password(decoded, colon + 1);
+}
+
+static int on_headers_complete(http_parser* parser) {
+  InfluxHttpRequestData* data = parser->data;
+  /* /ping is a health check and doesn't require auth */
+  if (data->type != OPERATION_PING && !check_auth(data)) {
+    data->auth_failed = true;
+    return 1; /* Skip body */
+  }
+  return 0;
+}
+
 #ifndef __GNU_LIBRARY__
 static const void* memrchr(const void* buf, int c, size_t len) {
   const unsigned char* ptr = (const unsigned char*)buf + len;
@@ -341,19 +477,19 @@ static int on_body_write(InfluxHttpRequestData* data, const char* buf,
 
   if (last_nl == NULL) {
     /* No complete line in this chunk, just accumulate */
-    appendBinaryStringInfo(&data->remaining, buf, len);
+    appendBinaryStringInfo(data->remaining, buf, len);
   } else {
     size_t complete = (last_nl - buf) + 1;
     size_t leftover = len - complete;
 
-    if (data->remaining.len > 0) {
+    if (data->remaining->len > 0) {
       /* Prepend previous remainder to the complete portion */
-      appendBinaryStringInfo(&data->remaining, buf, complete);
+      appendBinaryStringInfo(data->remaining, buf, complete);
       HttpWorkerInsertMeasurements(data->nspoid,
-                                   data->remaining.data,
-                                   data->remaining.len,
+                                   data->remaining->data,
+                                   data->remaining->len,
                                    data->precision_multiplier);
-      resetStringInfo(&data->remaining);
+      resetStringInfo(data->remaining);
     } else {
       HttpWorkerInsertMeasurements(
           data->nspoid, buf, complete, data->precision_multiplier);
@@ -361,7 +497,7 @@ static int on_body_write(InfluxHttpRequestData* data, const char* buf,
 
     /* Save any trailing partial line */
     if (leftover > 0)
-      appendBinaryStringInfo(&data->remaining, last_nl + 1, leftover);
+      appendBinaryStringInfo(data->remaining, last_nl + 1, leftover);
   }
 
   return 0;
@@ -407,10 +543,10 @@ static int on_message_complete(http_parser* parser) {
    * sender did not send a terminating newline. We accept this even though it
    * is not following the protocol.
    */
-  if (data->remaining.len > 0)
+  if (data->remaining->len > 0)
     HttpWorkerInsertMeasurements(data->nspoid,
-                                 data->remaining.data,
-                                 data->remaining.len,
+                                 data->remaining->data,
+                                 data->remaining->len,
                                  data->precision_multiplier);
 
   return 0;
@@ -418,12 +554,14 @@ static int on_message_complete(http_parser* parser) {
 
 static const char* InfluxHttpStatusMessage(int status_code) {
   switch (status_code) {
-    case 400:
-      return "Bad Request";
-    case 404:
-      return "Not Found";
     case 204:
       return "No Content";
+    case 400:
+      return "Bad Request";
+    case 401:
+      return "Unauthorized";
+    case 404:
+      return "Not Found";
     default:
       return "Unknown Status";
   }
@@ -494,8 +632,6 @@ void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state, int fd,
             errmsg("sent %ld bytes of response but should have sent %d: %m",
                    sent,
                    response.len));
-
-  resetStringInfo(&response);
 }
 
 void InfluxHttpWorkerSendErrorResponse(InfluxHttpWorkerState* state, int fd,
@@ -595,6 +731,7 @@ static void extend_epoll_set(InfluxHttpWorkerState* state, int fd) {
  */
 void InfluxHttpWorkerConnectionInit(InfluxHttpConnectionEntry* entry) {
   MemoryContext oldcontext;
+  InfluxHttpRequestData* request;
 
   entry->mcxt = AllocSetContextCreate(
       CurrentMemoryContext, "InfluxHttpConnection", ALLOCSET_SMALL_SIZES);
@@ -604,15 +741,18 @@ void InfluxHttpWorkerConnectionInit(InfluxHttpConnectionEntry* entry) {
   entry->settings.on_url = on_url;
   entry->settings.on_header_field = on_header_field;
   entry->settings.on_header_value = on_header_value;
+  entry->settings.on_headers_complete = on_headers_complete;
   entry->settings.on_body = on_body;
   entry->settings.on_message_complete = on_message_complete;
   http_parser_init(&entry->parser, HTTP_REQUEST);
 
   entry->parser.data =
       MemoryContextAllocZero(entry->mcxt, sizeof(InfluxHttpRequestData));
+  request = entry->parser.data;
+  request->mcxt = entry->mcxt;
 
   oldcontext = MemoryContextSwitchTo(entry->mcxt);
-  initStringInfo(&((InfluxHttpRequestData*)entry->parser.data)->remaining);
+  request->remaining = makeStringInfo();
   MemoryContextSwitchTo(oldcontext);
 }
 
@@ -852,7 +992,20 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
     {
       InfluxHttpRequestData* req_data = entry->parser.data;
 
-      if (entry->parser.status_code > 0) {
+      if (req_data->auth_failed) {
+        InfluxHttpHeaderData auth_fields[] = {
+            {"WWW-Authenticate", "Basic realm=\"InfluxDB\""},
+            {"Content-Type", "application/json"},
+            {"Connection", "close"},
+        };
+        InfluxHttpWorkerSendResponse(state,
+                                     fd,
+                                     401,
+                                     auth_fields,
+                                     sizeof(auth_fields) / sizeof(*auth_fields),
+                                     "{\"error\":\"authorization failed\"}");
+        cleanup_connection = true;
+      } else if (entry->parser.status_code > 0) {
         JsonbParseState* jbstate = NULL;
         JsonbValue* result;
         const char* errmsg =

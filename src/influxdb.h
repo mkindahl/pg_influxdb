@@ -30,6 +30,7 @@ extern char* influxdb_http_service;
 extern char* influxdb_database;
 extern int influxdb_http_workers;
 extern int influxdb_http_worker_restart_time;
+extern bool influxdb_http_auth;
 
 extern char* influxdb_udp_service;
 extern char* influxdb_udp_schema;
