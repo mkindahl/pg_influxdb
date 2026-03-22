@@ -1,0 +1,33 @@
+name: Static Code Analysis
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+    branches: ["main"]
+
+jobs:
+  clang-tidy:
+    name: Run clang-tidy Static Analysis
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
+          sudo apt-get update
+          sudo apt-get -y install clang-tidy bear postgresql-server-dev-18
+
+      - name: Generate compile_commands.json
+        run: bear -- make
+        env:
+          PG_CONFIG: /usr/lib/postgresql/18/bin/pg_config
+
+      - name: Run clang-tidy
+        run: |
+          clang-tidy -p . $(find src -name '*.c' \
+            ! -name 'http_parser.c' \
+            ! -name 'tokenizer_lex.c') \
+            --warnings-as-errors='*'
