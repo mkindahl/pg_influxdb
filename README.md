@@ -111,6 +111,21 @@ The following options are available:
 `influxdb.database` (`string`)
 : Name of the database that the HTTP workers shall connect to.
 
+`influxdb.http_auth` (`boolean`)
+: Enable HTTP Basic Authentication using PostgreSQL roles. When
+  enabled, HTTP requests must provide credentials matching a
+  PostgreSQL role created with `CREATE USER ... WITH PASSWORD`.
+  Credentials can be provided via the `Authorization: Basic` header
+  or `u=` and `p=` query parameters. The `/ping` endpoint is exempt
+  from authentication. Default is `off`.
+
+> [!WARNING]
+> The extension does not support TLS. Credentials are sent in
+> cleartext over the wire (Base64-encoded in the `Authorization`
+> header or as query parameters). If you enable authentication, use
+> a TLS-terminating reverse proxy (e.g., nginx, HAProxy, or stunnel)
+> in front of the endpoint to protect credentials in transit.
+
 ## Functions
 
 There are some functions available, which are mostly for debugging and
