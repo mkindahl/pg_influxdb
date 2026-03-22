@@ -60,6 +60,8 @@
 
 #define BUFFER_SIZE (8 * 1024)
 
+#define STR_LIT(str) str, sizeof(str) - 1
+
 /*
  * Enum: State for an HTTP worker connection.
  */
@@ -107,12 +109,12 @@ static struct {
   size_t length;
   int64 multiplier;
 } multipliers[] = {
-    {"ns", 2, 1},
-    {"us", 2, 1000L},
-    {"ms", 2, 1000000L},
-    {"s", 1, 1000000000L},
-    {"m", 1, 60L * 1000000000L},
-    {"h", 1, 60L * 60L * 1000000000L},
+    {STR_LIT("ns"), 1},
+    {STR_LIT("us"), 1000L},
+    {STR_LIT("ms"), 1000000L},
+    {STR_LIT("s"), 1000000000L},
+    {STR_LIT("m"), 60L * 1000000000L},
+    {STR_LIT("h"), 60L * 60L * 1000000000L},
 };
 
 static int64 get_precision_multiplier(const char* val, size_t len) {
@@ -139,10 +141,11 @@ static void handle_write_param_precision(InfluxHttpRequestData* data,
 
 static struct {
   const char* param;
+  size_t length;
   void (*cmd)(InfluxHttpRequestData* data, const char* val, size_t len);
 } params[] = {
-    {"db", handle_write_param_db},
-    {"precision", handle_write_param_precision},
+    {STR_LIT("db"), handle_write_param_db},
+    {STR_LIT("precision"), handle_write_param_precision},
 };
 
 static void handle_write_param(InfluxHttpRequestData* data, const char* key,
@@ -150,7 +153,8 @@ static void handle_write_param(InfluxHttpRequestData* data, const char* key,
   const size_t keylen = (val - 1) - key;
   const size_t vallen = endptr - val;
   for (int i = 0; i < lengthof(params); ++i)
-    if (strncmp(key, params[i].param, keylen) == 0)
+    if (params[i].length == keylen &&
+        strncmp(key, params[i].param, keylen) == 0)
       return (*params[i].cmd)(data, val, vallen);
 }
 
@@ -217,11 +221,11 @@ static int on_url_ping(http_parser* parser, InfluxHttpRequestData* data,
  */
 static struct operation {
   const char* path;
-  size_t len;
+  size_t length;
   int (*exec)(http_parser*, InfluxHttpRequestData*, const char*);
 } operations[] = {
-    {"/write", sizeof("/write"), on_url_write},
-    {"/ping", sizeof("/ping"), on_url_ping},
+    {STR_LIT("/write"), on_url_write},
+    {STR_LIT("/ping"), on_url_ping},
 };
 
 /*
@@ -236,7 +240,7 @@ static int on_url(http_parser* parser, const char* at, size_t length) {
    * matches. */
   for (int i = 0; i < lengthof(operations); ++i) {
     struct operation* oper = &operations[i];
-    if (pathlen == oper->len - 1 && strncmp(at, oper->path, pathlen) == 0)
+    if (pathlen == oper->length && strncmp(at, oper->path, pathlen) == 0)
       return (*oper->exec)(parser, data, &at[pathlen]);
   }
 
