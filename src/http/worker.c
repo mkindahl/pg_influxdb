@@ -47,19 +47,18 @@
 #include <unistd.h>
 #include <zlib.h>
 
+#include <arpa/inet.h>
+#include <netinet/in.h>
 #include <sys/epoll.h>
 #include <sys/socket.h>
 
+#include "common/utils.h"
 #include "config.h"
 #include "exec/insert.h"
 #include "http/http_parser.h"
 #include "http/params.h"
 #include "influxdb.h"
 #include "network.h"
-#include "utils.h"
-
-#include <arpa/inet.h>
-#include <netinet/in.h>
 
 #define BUFFER_SIZE (8 * 1024)
 
