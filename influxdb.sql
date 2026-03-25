@@ -25,5 +25,8 @@ AS 'MODULE_PATHNAME' LANGUAGE C;
 
 CREATE PROCEDURE @extschema@.process_text(regnamespace, text) AS 'MODULE_PATHNAME' LANGUAGE C;
 
+CREATE FUNCTION @extschema@.url_decode(text) RETURNS text
+AS 'MODULE_PATHNAME', 'url_decode_text' LANGUAGE C STRICT;
+
 CREATE FUNCTION @extschema@.trigger_fatal_error() RETURNS TRIGGER
 AS 'MODULE_PATHNAME' LANGUAGE C;
