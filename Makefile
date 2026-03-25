@@ -15,7 +15,7 @@
 # <https://www.gnu.org/licenses/>.
 
 MODULE_big = influxdb
-OBJS_http = src/http/http_parser.o src/http/params.o src/http/worker.o
+OBJS_http = src/http/http_parser.o src/http/params.o src/http/worker.o src/http/utils.o
 OBJS_udp = src/udp/worker.o
 OBJS_proto = src/proto/tokenizer_lex.o src/proto/parser.o
 OBJS_exec = src/exec/plans.o src/exec/insert.o src/exec/table.o
@@ -30,7 +30,7 @@ EXTENSION = influxdb
 DATA_built = influxdb--$(VERSION_influxdb).sql
 PGFILEDESC = "influxdb - InfluxDB web interface to PostgreSQL"
 
-REGRESS = tokenizer parser process create
+REGRESS = tokenizer parser process create url_decode
 TAP_TESTS = 1
 
 PG_CPPFLAGS = -Isrc
