@@ -6,8 +6,8 @@
 
 #include <stdlib.h>
 
+#include "common/utils.h"
 #include "http/worker.h"
-#include "utils.h"
 
 static struct {
   const char* precision;

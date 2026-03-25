@@ -8,17 +8,17 @@ BinPackParameters: true
 BinPackArguments: false
 IncludeBlocks: Regroup
 IncludeCategories:
-    # A few special PostgreSQL include files are in the first group
-    # but need to be in a specific order to work correctly.
-  - Regex: '<postgres.h>'
+  # A few special PostgreSQL include files are in the first group
+  # but need to be in a specific order to work correctly.
+  - Regex: "<postgres.h>"
     Priority: 1
     SortPriority: 1
-  - Regex: '<fmgr.h>'
+  - Regex: "<fmgr.h>"
     Priority: 1
     SortPriority: 2
 
     # PostgreSQL include files, in no particular order.
-  - Regex: '<(storage|utils|regex|partitioning|foreign|extension|common|libpq|access|lib|catalog|commands|nodes|optimizer|datatype|fe_utils|jit|mb|replication|snowball|tcop|bootstrap|executor|lib|parser|port|postmaster|rewrite|statistics|tsearch)/.*>'
+  - Regex: "<(storage|utils|regex|partitioning|foreign|extension|common|libpq|access|lib|catalog|commands|nodes|optimizer|datatype|fe_utils|jit|mb|replication|snowball|tcop|bootstrap|executor|lib|parser|port|postmaster|rewrite|statistics|tsearch)/.*>"
     Priority: 3
     SortPriority: 3
 
@@ -31,7 +31,7 @@ IncludeCategories:
     SortPriority: 3
 
     # C++ standard include files
-  - Regex: '<[a-z_0-9]+>'
+  - Regex: "<[a-z_0-9]+>"
     Priority: 4
     SortPriority: 4
 
@@ -41,7 +41,7 @@ IncludeCategories:
     SortPriority: 4
 
     # System include files
-  - Regex: '<sys/[a-z0-9_]+\.h>'
+  - Regex: '<(arpa|sys|netinet)/[a-z0-9_]+\.h>'
     Priority: 5
     SortPriority: 5
 
