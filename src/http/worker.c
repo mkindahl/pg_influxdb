@@ -22,14 +22,17 @@
 
 #include <access/xact.h>
 #include <catalog/namespace.h>
+#include <commands/schemacmds.h>
 #include <common/base64.h>
 #include <executor/spi.h>
 #include <libpq/crypt.h>
+#include <nodes/parsenodes.h>
 #include <pgstat.h>
 #include <postmaster/bgworker.h>
 #include <postmaster/interrupt.h>
 #include <storage/ipc.h>
 #include <utils/backend_status.h>
+#include <utils/elog.h>
 #include <utils/guc.h>
 #include <utils/hsearch.h>
 #include <utils/jsonb.h>
@@ -57,10 +60,13 @@
 #include "exec/insert.h"
 #include "http/http_parser.h"
 #include "http/params.h"
+#include "http/utils.h"
 #include "influxdb.h"
 #include "network.h"
 
 #define BUFFER_SIZE (8 * 1024)
+
+extern int query_parse_string(const char* input, Node** parsetree);
 
 static void HttpWorkerInsertMeasurements(Oid nspid, const char* buf,
                                          size_t buflen,
@@ -90,10 +96,25 @@ static int on_url_write(http_parser* parser, InfluxHttpRequestData* data,
   return 0; /*  All OK */
 }
 
+/*
+ * Function: on_url_ping
+ * Description: Handles URL parsing for the ping operation.
+ */
 static int on_url_ping(http_parser* parser, InfluxHttpRequestData* data,
                        const char* params) {
   data->type = OPERATION_PING;
   return 0; /* All OK */
+}
+
+/*
+ * Function: on_url_query
+ * Description: Handles URL parsing for the query operation.
+ */
+static int on_url_query(http_parser* parser, InfluxHttpRequestData* data,
+                        const char* params) {
+  data->type = OPERATION_QUERY;
+  InfluxParseParams(data, params, InfluxWriteParamHandler); /* for u=/p= auth */
+  return 0;
 }
 
 /*
@@ -106,6 +127,7 @@ static struct operation {
 } operations[] = {
     {STR_LIT("/write"), on_url_write},
     {STR_LIT("/ping"), on_url_ping},
+    {STR_LIT("/query"), on_url_query},
 };
 
 /*
@@ -120,8 +142,15 @@ static int on_url(http_parser* parser, const char* at, size_t length) {
    * matches. */
   for (int i = 0; i < lengthof(operations); ++i) {
     struct operation* oper = &operations[i];
-    if (pathlen == oper->length && strncmp(at, oper->path, pathlen) == 0)
-      return (*oper->exec)(parser, data, &at[pathlen]);
+    if (pathlen == oper->length && strncmp(at, oper->path, pathlen) == 0) {
+      /*
+       * Allocate memory in the current (ephemeral) memory
+       * context. Typically the SPI memory context.
+       */
+      char* buf = pnstrdup(&at[pathlen], length);
+      url_decode(buf);
+      return (*oper->exec)(parser, data, buf);
+    }
   }
 
   parser->status_code = 404;
@@ -347,6 +376,63 @@ static int on_body_write(InfluxHttpRequestData* data, const char* buf,
   return 0;
 }
 
+static void handle_query_body(InfluxHttpRequestData* data, const char* buf,
+                              size_t len) {
+  char* body;
+  char* qval;
+  Node* parsetree;
+
+  /* Copy body to a mutable, NUL-terminated buffer */
+  body = palloc(len + 1);
+  memcpy(body, buf, len);
+  body[len] = '\0';
+
+  /* Find the q= parameter in the form-encoded body */
+  qval = NULL;
+  if (strncmp(body, "q=", 2) == 0) {
+    qval = body + 2;
+  } else {
+    char* amp = strstr(body, "&q=");
+    if (amp)
+      qval = amp + 3;
+  }
+
+  if (qval == NULL) {
+    data->query_error = pstrdup("missing required parameter \\\"q\\\"");
+    pfree(body);
+    return;
+  }
+
+  /* Terminate the q value at the next & if present */
+  {
+    char* amp = strchr(qval, '&');
+    if (amp)
+      *amp = '\0';
+  }
+
+  url_decode(qval);
+
+  /* Parse the query */
+  if (query_parse_string(qval, &parsetree) != 0) {
+    data->query_error = pstrdup("syntax error");
+    pfree(body);
+    return;
+  }
+
+  switch (nodeTag(parsetree)) {
+    case T_CreateSchemaStmt:
+      CreateSchemaCommand(
+          (CreateSchemaStmt*)parsetree, "(CREATE DATABASE)", -1, -1);
+      data->query_ok = true;
+      break;
+    default:
+      data->query_error = pstrdup("unrecognized query");
+      break;
+  }
+
+  pfree(body);
+}
+
 /*
  * Function: on_body
  * Description: Handles the body of an HTTP request.
@@ -371,6 +457,9 @@ static int on_body(http_parser* parser, const char* buf, size_t len) {
       return on_body_write(data, buf, len);
     case OPERATION_PING:
       return 0; /* Ping has no body to process */
+    case OPERATION_QUERY:
+      handle_query_body(data, buf, len);
+      return 0;
     case OPERATION_UNDEF:
       Assert(0); /* Shouldn't be reached */
       break;
@@ -895,6 +984,33 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
               ping_fields,
               sizeof(ping_fields) / sizeof(*ping_fields),
               NULL);
+        } else if (req_data->type == OPERATION_QUERY) {
+          InfluxHttpHeaderData query_fields[] = {
+              {"Content-Type", "application/json"},
+              {"Connection", "close"},
+          };
+          if (req_data->query_ok) {
+            InfluxHttpWorkerSendResponse(
+                state,
+                fd,
+                200,
+                query_fields,
+                sizeof(query_fields) / sizeof(*query_fields),
+                "{\"results\":[{}]}");
+          } else {
+            char body[512];
+            snprintf(body,
+                     sizeof(body),
+                     "{\"results\":[{\"error\":\"%s\"}]}",
+                     req_data->query_error);
+            InfluxHttpWorkerSendResponse(
+                state,
+                fd,
+                400,
+                query_fields,
+                sizeof(query_fields) / sizeof(*query_fields),
+                body);
+          }
         } else {
           InfluxHttpWorkerSendResponse(
               state, fd, 204, fields, sizeof(fields) / sizeof(*fields), NULL);
@@ -986,6 +1102,10 @@ void InfluxHttpWorkerMain(Datum arg) {
       ProcessConfigFile(PGC_SIGHUP);
     }
 
+    /*
+     * Process all ready events. These can be new connections on the listen
+     * socket or data to read on existing connections.
+     */
     for (int i = 0; i < nfds; i++) {
       int fd = events[i].data.fd;
       if (fd == state.listen_fd)

@@ -54,8 +54,9 @@ tmp_check/
 *.ERR
 
 # Generated files
-tokenizer_lex.c
-tokenizer_lex.h
+src/proto/tokenizer_lex.[ch]
+src/http/query_parser.[ch]
+src/http/query_scanner.[ch]
 influxdb--0.1.sql
 compile_commands.json
 regression.diffs
