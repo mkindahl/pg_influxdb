@@ -1,0 +1,174 @@
+-- InfluxDB API to PostgreSQL. Copyright (C) 2025 Mats Kindahl
+--
+-- This program is free software: you can redistribute it and/or
+-- modify it under the terms of the GNU Affero General Public License
+-- as published by the Free Software Foundation, either version 3 of
+-- the License, or (at your option) any later version.
+--
+-- This program is distributed in the hope that it will be useful, but
+-- WITHOUT ANY WARRANTY; without even the implied warranty of
+-- MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+-- Affero General Public License for more details.
+--
+-- You should have received a copy of the GNU Affero General Public
+-- License along with this program.  If not, see
+-- <https://www.gnu.org/licenses/>.
+CREATE EXTENSION influxdb;
+-- Basic percent-encoding
+SELECT influxdb.url_decode('hello%20world');
+ url_decode  
+-------------
+ hello world
+(1 row)
+
+SELECT influxdb.url_decode('%48%65%6C%6C%6F');
+ url_decode 
+------------
+ Hello
+(1 row)
+
+-- Plus as space
+SELECT influxdb.url_decode('hello+world');
+ url_decode  
+-------------
+ hello world
+(1 row)
+
+SELECT influxdb.url_decode('a+b+c');
+ url_decode 
+------------
+ a b c
+(1 row)
+
+-- Mixed encoding
+SELECT influxdb.url_decode('key%3Dvalue%26foo%3Dbar');
+    url_decode     
+-------------------
+ key=value&foo=bar
+(1 row)
+
+SELECT influxdb.url_decode('CREATE+DATABASE+%22mydb%22');
+       url_decode       
+------------------------
+ CREATE DATABASE "mydb"
+(1 row)
+
+-- Bare percent at end of string
+SELECT influxdb.url_decode('%');
+ url_decode 
+------------
+ %
+(1 row)
+
+-- Truncated: percent with one hex digit
+SELECT influxdb.url_decode('%f');
+ url_decode 
+------------
+ %f
+(1 row)
+
+-- Truncated: percent with one hex digit mid-string
+SELECT influxdb.url_decode('a%fb');
+ url_decode 
+------------
+ a
+(1 row)
+
+-- Valid two-digit hex
+SELECT influxdb.url_decode('%ff');
+ url_decode 
+------------
+ 
+(1 row)
+
+-- Non-hex characters after percent
+SELECT influxdb.url_decode('%zz');
+ url_decode 
+------------
+ %zz
+(1 row)
+
+SELECT influxdb.url_decode('%g1');
+ url_decode 
+------------
+ %g1
+(1 row)
+
+-- Empty string
+SELECT influxdb.url_decode('');
+ url_decode 
+------------
+ 
+(1 row)
+
+-- No encoding needed
+SELECT influxdb.url_decode('plaintext');
+ url_decode 
+------------
+ plaintext
+(1 row)
+
+-- Percent-encoded special characters
+SELECT influxdb.url_decode('%2F');
+ url_decode 
+------------
+ /
+(1 row)
+
+SELECT influxdb.url_decode('%3F');
+ url_decode 
+------------
+ ?
+(1 row)
+
+SELECT influxdb.url_decode('%23');
+ url_decode 
+------------
+ #
+(1 row)
+
+SELECT influxdb.url_decode('%26');
+ url_decode 
+------------
+ &
+(1 row)
+
+-- Case insensitive hex digits
+SELECT influxdb.url_decode('%2f');
+ url_decode 
+------------
+ /
+(1 row)
+
+SELECT influxdb.url_decode('%2F');
+ url_decode 
+------------
+ /
+(1 row)
+
+-- Multiple percent-encoded sequences
+SELECT influxdb.url_decode('%20%20%20');
+ url_decode 
+------------
+    
+(1 row)
+
+-- Percent at various positions
+SELECT influxdb.url_decode('abc%');
+ url_decode 
+------------
+ abc%
+(1 row)
+
+SELECT influxdb.url_decode('abc%f');
+ url_decode 
+------------
+ abc%f
+(1 row)
+
+SELECT influxdb.url_decode('%abc');
+ url_decode 
+------------
+ c
+(1 row)
+
