@@ -25,14 +25,9 @@
 
 #include <postgres.h>
 
+#include "common/utils.h"
 #include "parser.h"
 #include "influxdb.h"
-
-#define SYNTAX_ERROR(MSG)                  \
-  ereport(ERROR,                           \
-          errcode(ERRCODE_SYNTAX_ERROR),   \
-          errmsg(MSG),                     \
-          errdetail("trying to scan '%s'", yytext));
 
 #define MAYBE_REMOVE_QUOTES()    \
   do {                           \
@@ -77,7 +72,7 @@ QUNTERM    '(\\.|{UTF8}|[^\\\n'])+
 [[:blank:]]+      return TOKEN_KIND_BLANK;
 {SYMBOL}          return TOKEN_KIND_SYMBOL;
 {QUNTERM}         |
-{QQUNTERM}        SYNTAX_ERROR("EOF in string literal")
+{QQUNTERM}        SYNTAX_ERROR("EOF in string literal", "trying to scan '%s'", yytext);
 \r?\n             return TOKEN_KIND_END_OF_LINE;
 (?s:.)            return *yytext;
 %%
