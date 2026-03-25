@@ -13,7 +13,7 @@ ARG LLVM_MAJOR
 
 # We need to install version 19 of CLang since that is what PG17 and
 # PG18 are dependent on.
-RUN apk add --no-cache build-base zlib-dev perl flex clang${LLVM_MAJOR} llvm${LLVM_MAJOR}-dev
+RUN apk add --no-cache build-base zlib-dev perl flex bison clang${LLVM_MAJOR} llvm${LLVM_MAJOR}-dev
 
 COPY . /build/pg_influxdb
 WORKDIR /build/pg_influxdb

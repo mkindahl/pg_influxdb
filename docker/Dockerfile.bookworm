@@ -12,7 +12,7 @@ ARG PG_MAJOR
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-    build-essential flex \
+    build-essential flex bison \
     postgresql-server-dev-${PG_MAJOR} \
     zlib1g-dev clang llvm-dev
 
