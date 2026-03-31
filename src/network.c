@@ -27,6 +27,7 @@
 #include <utils/elog.h>
 
 #include <memory.h>
+#include <unistd.h>
 
 #include "influxdb.h"
 

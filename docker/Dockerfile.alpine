@@ -1,0 +1,43 @@
+# pg_influxdb — Alpine Linux
+# Build: docker build -f docker/Dockerfile.alpine --build-arg PG_MAJOR=18 -t pg_influxdb .
+
+ARG PG_MAJOR=18
+ARG LLVM_MAJOR="19"
+
+# =============================================================================
+# Stage 1: Build
+# =============================================================================
+FROM postgres:${PG_MAJOR}-alpine AS builder
+
+ARG LLVM_MAJOR
+
+# We need to install version 19 of CLang since that is what PG17 and
+# PG18 are dependent on.
+RUN apk add --no-cache build-base zlib-dev perl flex clang${LLVM_MAJOR} llvm${LLVM_MAJOR}-dev
+
+COPY . /build/pg_influxdb
+WORKDIR /build/pg_influxdb
+
+RUN make clean || true \
+    && make \
+    && make install DESTDIR=/build-output
+
+# =============================================================================
+# Stage 2: Runtime
+# =============================================================================
+FROM postgres:${PG_MAJOR}-alpine
+
+LABEL org.opencontainers.image.source="https://github.com/mkindahl/pg_influxdb"
+LABEL org.opencontainers.image.description="InfluxDB API to PostgreSQL"
+
+RUN apk add --no-cache curl
+
+COPY --from=builder /build-output/usr/ /usr/
+
+COPY docker/initdb-pg-influxdb.sh /docker-entrypoint-initdb.d/
+
+EXPOSE 8086/tcp
+EXPOSE 8089/udp
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
+    CMD pg_isready -U "${POSTGRES_USER:-postgres}" && curl -sf http://localhost:8086/ping
