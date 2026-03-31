@@ -38,7 +38,7 @@ jobs:
         run: |
           sudo pg_createcluster --start ${{ matrix.version }} test
           pg_lsclusters
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v5
       - name: Make and install
         run: |
           make
@@ -81,7 +81,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -182,7 +182,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

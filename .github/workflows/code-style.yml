@@ -11,7 +11,7 @@ jobs:
     name: Check Perl Code Style with perltidy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install perltidy
         run: sudo apt-get update && sudo apt-get install -y perltidy
       - name: Compare perltidy formatting options
