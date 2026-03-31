@@ -19,6 +19,7 @@ possible.
 
 - [InfluxDB Line Protocol](docs/line_protocol.md)
 - [InfluxDB HTTP Endpoint](docs/http_endpoint.md)
+- [InfluxDB Docker Image](docs/docker.md)
 
 ## Dependencies
 
@@ -64,21 +65,6 @@ make && sudo make install
 ```
 
 [pgdg]: https://wiki.postgresql.org/wiki/Apt
-
-Add the database you want the workers to connect to in the
-`postgresql.conf` file and add `influxdb` to
-`shared_preload_libraries`:
-
-```
-shared_preload_libraries = 'influxdb'
-influxdb.database = 'my_database'
-```
-
-> [!NOTE]
-> It is necessary to add `influxdb` to the `shared_preload_libraries`
-> because this is where the background workers are started. PostgreSQL
-> has support for dynamically spawning workers, but they would not
-> survive a restart so they are not supported right now.
 
 ## Options
 
@@ -145,8 +131,8 @@ testing:
 
 ## Copyrights
 
-For the `http_parser.c` and `http_parser.h` files, the following MIT
-license applies:
+For the `src/http/http_parser.c` and `src/http/http_parser.h` files,
+the following MIT license applies:
 
     Copyright Joyent, Inc. and other Node contributors.
 
