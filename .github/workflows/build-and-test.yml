@@ -2,9 +2,9 @@ name: C/C++ CI
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
   build-ubuntu:
@@ -39,7 +39,6 @@ jobs:
           sudo pg_createcluster --start ${{ matrix.version }} test
           pg_lsclusters
       - uses: actions/checkout@v2
-
       - name: Make and install
         run: |
           make
@@ -65,3 +64,221 @@ jobs:
             echo "=== $F ==="
             cat $F
           done
+
+  docker-test:
+    needs: build-ubuntu
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        pg_version: [17, 18]
+        variant: [bookworm, bullseye, trixie, alpine]
+        exclude:
+          - pg_version: 18
+            variant: bullseye
+
+    name: Docker PG ${{ matrix.pg_version }} / ${{ matrix.variant }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.${{ matrix.variant }}
+          build-args: PG_MAJOR=${{ matrix.pg_version }}
+          load: true
+          tags: pg_influxdb:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start container
+        run: |
+          docker run -d --name pg_influxdb_test \
+            -e POSTGRES_PASSWORD=testpass \
+            -e INFLUXDB_DATABASE=testdb \
+            -e INFLUXDB_AUTO_CREATE_TABLE=on \
+            -P \
+            pg_influxdb:test
+
+      - name: Wait for PostgreSQL and extension
+        run: |
+          for i in $(seq 1 60); do
+            sleep 1
+            result=$(docker exec pg_influxdb_test \
+              psql -U postgres -d testdb -tAc \
+              "SELECT extname FROM pg_extension WHERE extname = 'influxdb'" 2>/dev/null || true)
+            if [ "$result" = "influxdb" ]; then
+              echo "PostgreSQL is ready and extension is loaded"
+              exit 0
+            fi
+          done
+          echo "Timed out waiting for PostgreSQL/extension"
+          docker logs pg_influxdb_test
+          exit 1
+
+      - name: Get HTTP port
+        id: ports
+        run: |
+          http_port=$(docker port pg_influxdb_test 8086/tcp | head -1 | cut -d: -f2)
+          echo "http_port=${http_port}" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for HTTP workers
+        run: |
+          for i in $(seq 1 30); do
+            sleep 1
+            count=$(docker exec pg_influxdb_test \
+              psql -U postgres -tAc \
+              "SELECT count(*) FROM pg_stat_activity WHERE backend_type LIKE 'InfluxDB%HTTP%' AND state = 'idle'" 2>/dev/null || echo 0)
+            if [ "$count" -gt 0 ] 2>/dev/null; then
+              docker exec pg_influxdb_test \
+                psql -U postgres -c "SELECT pid, backend_type, state, query FROM pg_stat_activity WHERE backend_type LIKE 'InfluxDB%HTTP%'"
+              echo "HTTP workers ready (${count} running)"
+              exit 0
+            fi
+          done
+          echo "Timed out waiting for HTTP workers"
+          docker logs pg_influxdb_test
+          exit 1
+
+      - name: Write line protocol point
+        run: |
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "http://localhost:${{ steps.ports.outputs.http_port }}/write?db=public" \
+            -d 'cpu,host=server01 value=0.64')
+          if [ "$status" != "204" ]; then
+            echo "Expected 204 from /write, got ${status}"
+            docker logs pg_influxdb_test
+            exit 1
+          fi
+          echo "/write returned 204"
+
+      - name: Query data back
+        run: |
+          result=$(docker exec pg_influxdb_test \
+            psql -U postgres -d testdb -tAc \
+            "SELECT count(*) FROM cpu")
+          if [ "$result" -lt 1 ]; then
+            echo "Expected at least 1 row in cpu table, got ${result}"
+            exit 1
+          fi
+          echo "Data verified: ${result} row(s) in cpu table"
+
+      - name: Stop container
+        if: always()
+        run: |
+          docker stop pg_influxdb_test || true
+          docker rm pg_influxdb_test || true
+
+  docker-defaults:
+    needs: build-ubuntu
+    runs-on: ubuntu-latest
+    name: Docker defaults
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.bookworm
+          build-args: PG_MAJOR=18
+          load: true
+          tags: pg_influxdb:defaults
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Start container with only POSTGRES_PASSWORD
+        run: |
+          docker run -d --name pg_influxdb_defaults \
+            -e POSTGRES_PASSWORD=testpass \
+            -P \
+            pg_influxdb:defaults
+
+      - name: Wait for PostgreSQL and extension
+        run: |
+          for i in $(seq 1 60); do
+            sleep 1
+            result=$(docker exec pg_influxdb_defaults \
+              psql -U postgres -tAc \
+              "SELECT extname FROM pg_extension WHERE extname = 'influxdb'" 2>/dev/null || true)
+            if [ "$result" = "influxdb" ]; then
+              echo "Extension loaded in default database"
+              exit 0
+            fi
+          done
+          echo "Timed out waiting for PostgreSQL/extension"
+          docker logs pg_influxdb_defaults
+          exit 1
+
+      - name: Verify default GUCs
+        run: |
+          docker exec pg_influxdb_defaults \
+            psql -U postgres -tAc "
+              SELECT format('%s = %s', name, setting)
+              FROM pg_settings
+              WHERE name LIKE 'influxdb.%'
+              ORDER BY name
+            " | while IFS= read -r line; do
+              echo "$line"
+            done
+
+          # Verify each default value
+          check_guc() {
+            local guc="$1" expected="$2"
+            actual=$(docker exec pg_influxdb_defaults \
+              psql -U postgres -tAc "SHOW $guc")
+            actual=$(echo "$actual" | xargs)
+            if [ "$actual" != "$expected" ]; then
+              echo "FAIL: $guc = '$actual', expected '$expected'"
+              exit 1
+            fi
+            echo "OK: $guc = $actual"
+          }
+
+          check_guc influxdb.database          postgres
+          check_guc influxdb.http_service      8086
+          check_guc influxdb.http_workers      4
+          check_guc influxdb.http_auth         off
+          check_guc influxdb.udp_service       8089
+          check_guc influxdb.udp_workers       4
+          check_guc influxdb.udp_schema        measurements
+          check_guc influxdb.auto_create_table on
+
+      - name: Verify HTTP port default
+        run: |
+          http_port=$(docker port pg_influxdb_defaults 8086/tcp | head -1 | cut -d: -f2)
+          for i in $(seq 1 30); do
+            sleep 1
+            count=$(docker exec pg_influxdb_defaults \
+              psql -U postgres -tAc \
+              "SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'InfluxDB HTTP protocol worker'" 2>/dev/null || echo 0)
+            if [ "$count" -gt 0 ] 2>/dev/null; then
+              echo "HTTP workers ready (${count} running)"
+              break
+            fi
+          done
+          status=$(curl -s -o /dev/null -w "%{http_code}" \
+            http://localhost:${http_port}/ping)
+          if [ "$status" != "204" ]; then
+            echo "Expected 204 from /ping on default port, got ${status}"
+            docker logs pg_influxdb_defaults
+            exit 1
+          fi
+          echo "/ping returned 204 on default HTTP port"
+
+      - name: Stop container
+        if: always()
+        run: |
+          docker stop pg_influxdb_defaults || true
+          docker rm pg_influxdb_defaults || true

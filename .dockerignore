@@ -1,0 +1,39 @@
+# Build artifacts
+*.o
+*.so
+*.bc
+influxdb--*.sql
+compile_commands.json
+tokenizer_lex.h
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.code-workspace
+
+# Git
+.git/
+.gitignore
+
+# CI/CD
+.github/
+
+# Docker (exclude Dockerfiles but keep the init script)
+docker/Dockerfile.*
+
+# Documentation (not needed for build)
+docs/
+README.md
+LICENSE
+LIMITATIONS.md
+TODO.md
+
+# Misc
+.claude/
+.clang-tidy
+*.diff
+config.toml
+bench/

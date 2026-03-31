@@ -1,0 +1,48 @@
+# pg_influxdb — Debian Bookworm
+# Build: docker build -f docker/Dockerfile.bookworm --build-arg PG_MAJOR=18 -t pg_influxdb .
+
+ARG PG_MAJOR=18
+
+# =============================================================================
+# Stage 1: Build
+# =============================================================================
+FROM postgres:${PG_MAJOR}-bookworm AS builder
+
+ARG PG_MAJOR
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+    build-essential flex \
+    postgresql-server-dev-${PG_MAJOR} \
+    zlib1g-dev clang llvm-dev
+
+COPY . /build/pg_influxdb
+WORKDIR /build/pg_influxdb
+
+RUN make clean || true \
+    && make \
+    && make install DESTDIR=/build-output
+
+# =============================================================================
+# Stage 2: Runtime
+# =============================================================================
+FROM postgres:${PG_MAJOR}-bookworm
+
+ARG PG_MAJOR
+
+LABEL org.opencontainers.image.source="https://github.com/mkindahl/pg_influxdb"
+LABEL org.opencontainers.image.description="InfluxDB API to PostgreSQL"
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends zlib1g curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /build-output/usr/ /usr/
+
+COPY docker/initdb-pg-influxdb.sh /docker-entrypoint-initdb.d/
+
+EXPOSE 8086/tcp
+EXPOSE 8089/udp
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=3 \
+    CMD pg_isready -U "${POSTGRES_USER:-postgres}" && curl -sf http://localhost:8086/ping
