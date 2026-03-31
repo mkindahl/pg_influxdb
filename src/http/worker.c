@@ -312,17 +312,6 @@ static int on_headers_complete(http_parser* parser) {
   return 0;
 }
 
-#ifndef __GNU_LIBRARY__
-static const void* memrchr(const void* buf, int c, size_t len) {
-  const unsigned char* ptr = (const unsigned char*)buf + len;
-  while (len-- > 0) {
-    if (*--ptr == (unsigned char)c)
-      return ptr;
-  }
-  return NULL;
-}
-#endif
-
 /*
  * Function: on_body_write
  * Description: Handles the body of a write request.
