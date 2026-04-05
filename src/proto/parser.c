@@ -23,8 +23,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "common/utils.h"
-
 static InfluxToken ParseTags(InfluxParseState* state,
                              InfluxDataPoint* data_point);
 static InfluxToken ParseFields(InfluxParseState* state,
@@ -33,8 +31,6 @@ static InfluxToken ParseFields(InfluxParseState* state,
 PG_FUNCTION_INFO_V1(tokenize);
 PG_FUNCTION_INFO_V1(parse_text);
 
-/* Use a different version of SYNTAX_ERROR here. Will refactor later. */
-#undef SYNTAX_ERROR
 #define SYNTAX_ERROR(EXPECT, TOKEN)                \
   do {                                             \
     ereport(ERROR,                                 \

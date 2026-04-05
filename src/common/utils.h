@@ -26,12 +26,6 @@
 
 #define STR_LIT(str) str, sizeof(str) - 1
 
-#define SYNTAX_ERROR(MSG, DETAIL, ...)   \
-  ereport(ERROR,                         \
-          errcode(ERRCODE_SYNTAX_ERROR), \
-          errmsg(MSG),                   \
-          errdetail(DETAIL, __VA_ARGS__))
-
 extern void InfluxJsonbAddKeyValue(JsonbParseState** state, const char* key,
                                    const char* value);
 extern Jsonb* InfluxErrorDataGetJsonb(ErrorData* edata);

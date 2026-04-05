@@ -29,7 +29,5 @@ jobs:
         run: |
           clang-tidy -p . $(find src -name '*.c' \
             ! -name 'http_parser.c' \
-            ! -name 'tokenizer_lex.c' \
-            ! -name 'query_parser.c' \
-            ! -name 'query_scanner.c') \
+            ! -name 'tokenizer_lex.c') \
             --warnings-as-errors='*'

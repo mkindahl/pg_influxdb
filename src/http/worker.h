@@ -78,7 +78,6 @@ typedef enum InfluxHttpRequestType {
   OPERATION_UNDEF,
   OPERATION_WRITE,
   OPERATION_PING,
-  OPERATION_QUERY,
 } InfluxHttpRequestType;
 
 /*
@@ -105,11 +104,9 @@ typedef struct InfluxHttpRequestData {
   StringInfo remaining;     /* Leftover partial line from on_body */
   InfluxHttpHeaderState header_state; /* Which header we're currently parsing */
   bool auth_failed;                   /* Auth check failed */
-  bool query_ok;                      /* Whether the query executed successfully */
   char* auth_header;                  /* Authorization header value */
   char* query_user;                   /* u= query parameter */
   char* query_pass;                   /* p= query parameter */
-  char* query_error;                  /* error message if query failed */
 } InfluxHttpRequestData;
 
 extern PGDLLEXPORT void InfluxHttpWorkerMain(Datum arg);

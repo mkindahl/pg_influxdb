@@ -15,7 +15,7 @@
 # <https://www.gnu.org/licenses/>.
 
 MODULE_big = influxdb
-OBJS_http = src/http/http_parser.o src/http/params.o src/http/worker.o src/http/utils.o src/http/query_parser.o src/http/query_scanner.o
+OBJS_http = src/http/http_parser.o src/http/params.o src/http/worker.o src/http/utils.o
 OBJS_udp = src/udp/worker.o
 OBJS_proto = src/proto/tokenizer_lex.o src/proto/parser.o
 OBJS_exec = src/exec/plans.o src/exec/insert.o src/exec/table.o
@@ -45,12 +45,7 @@ influxdb--$(VERSION_influxdb).sql: influxdb.sql
 format-perl:
 	perltidy $(PERL_FILES)
 
-src/proto/tokenizer_lex.c src/proto/tokenizer_lex.h: src/proto/tokenizer_lex.l
-	flex -o src/proto/tokenizer_lex.c $<
-src/http/query_parser.c src/http/query_parser.h: src/http/query_parser.y
-	bison -d $< -o src/http/query_parser.c
-src/http/query_scanner.c src/http/query_scanner.h: src/http/query_scanner.l
-	flex --header-file=src/http/query_scanner.h -o src/http/query_scanner.c $<
+src/protocol/tokenizer_lex.c src/protocol/tokenizer_lex.h: src/protocol/tokenizer_lex.l
 
 src/proto/parser.o: src/proto/parser.c src/proto/parser.h
 src/proto/tokenizer_lex.o: src/proto/tokenizer_lex.c src/proto/parser.h \
@@ -58,12 +53,6 @@ src/proto/tokenizer_lex.o: src/proto/tokenizer_lex.c src/proto/parser.h \
 src/http/worker.o: src/http/worker.c src/http/worker.h src/http/http_parser.h \
  src/config.h src/http/http_parser.h src/influxdb.h src/network.h \
  src/common/utils.h
-src/http/query_parser.o: src/http/query_parser.c src/http/query_parser.h \
- src/http/query_scanner.h src/common/utils.h
-src/http/query_scanner.o: src/http/query_scanner.c src/http/query_scanner.h \
- src/http/query_parser.h src/common/utils.h
-src/http/utils.o: src/http/utils.c src/http/utils.h src/config.h src/influxdb.h \
- src/network.h
 src/http/http_parser.o: src/http/http_parser.c src/http/http_parser.h
 src/http/params.o: src/http/params.c src/http/params.h src/config.h src/influxdb.h \
  src/common/utils.h
@@ -75,5 +64,5 @@ src/udp/worker.o: src/udp/worker.c src/udp/worker.h src/config.h \
  src/influxdb.h src/network.h src/exec/insert.h
 src/influxdb.o: src/influxdb.c src/influxdb.h src/config.h src/http/worker.h \
  src/http/http_parser.h src/udp/worker.h
-src/network.o: src/network.c src/network.h
+network.o: src/network.c src/network.h
 src/common/utils.o: src/common/utils.c src/common/utils.h
