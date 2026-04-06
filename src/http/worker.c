@@ -1,5 +1,5 @@
 /*
- * InfluxDB API to PostgreSQL. Copyright (C) 2025 Mats Kindahl
+ * Copyright (C) 2025 Mats Kindahl
  *
  * This program is free software: you can redistribute it and/or
  * modify it under the terms of the GNU Affero General Public License
@@ -68,6 +68,51 @@
 
 extern int query_parse_string(const char* input, Node** parsetree);
 
+static int on_url_write(http_parser* parser, InfluxHttpRequestData* data,
+                        const char* params);
+static int on_url_ping(http_parser* parser, InfluxHttpRequestData* data,
+                       const char* params);
+static int on_url_query(http_parser* parser, InfluxHttpRequestData* data,
+                        const char* params);
+
+/*
+ * Struct: HttpOperation
+ *
+ * Represents an HTTP operation (endpoint) that we support, including
+ * the path, allowed methods,
+ */
+typedef struct HttpOperation {
+  const char* path;
+  size_t length;
+  unsigned int allowed_methods;
+  int (*exec)(http_parser*, InfluxHttpRequestData*, const char*);
+} HttpOperation;
+
+/*
+ * Dispatch table for handling different URL paths.
+ */
+static struct HttpOperation operations[] = {
+    {
+        STR_LIT("/write"),
+        (1 << HTTP_POST),
+        on_url_write,
+    },
+    {
+        STR_LIT("/ping"),
+        (1 << HTTP_GET) | (1 << HTTP_HEAD),
+        on_url_ping,
+    },
+    {
+        STR_LIT("/query"),
+        (1 << HTTP_POST) | (1 << HTTP_GET),
+        on_url_query,
+    },
+};
+
+/*
+ * Function: HttpWorkerInsertMeasurements
+ * Description: Inserts measurements into the database for a write request.
+ */
 static void HttpWorkerInsertMeasurements(Oid nspid, const char* buf,
                                          size_t buflen,
                                          int64 precision_multiplier) {
@@ -118,19 +163,6 @@ static int on_url_query(http_parser* parser, InfluxHttpRequestData* data,
 }
 
 /*
- * Dispatch table for handling different URL paths.
- */
-static struct operation {
-  const char* path;
-  size_t length;
-  int (*exec)(http_parser*, InfluxHttpRequestData*, const char*);
-} operations[] = {
-    {STR_LIT("/write"), on_url_write},
-    {STR_LIT("/ping"), on_url_ping},
-    {STR_LIT("/query"), on_url_query},
-};
-
-/*
  * Function: on_url
  * Description: Handles URL parsing for different operations.
  */
@@ -141,13 +173,19 @@ static int on_url(http_parser* parser, const char* at, size_t length) {
   /* Iterate over the dispatch table and call the exec function if there are
    * matches. */
   for (int i = 0; i < lengthof(operations); ++i) {
-    struct operation* oper = &operations[i];
+    HttpOperation* oper = &operations[i];
     if (pathlen == oper->length && strncmp(at, oper->path, pathlen) == 0) {
+      char* buf;
+      if (!(oper->allowed_methods & (1 << parser->method))) {
+        data->allow_header = allow_header_string(oper->allowed_methods);
+        parser->status_code = 405;
+        return 1;
+      }
       /*
        * Allocate memory in the current (ephemeral) memory
        * context. Typically the SPI memory context.
        */
-      char* buf = pnstrdup(&at[pathlen], length);
+      buf = pnstrdup(&at[pathlen], length);
       url_decode(buf);
       return (*oper->exec)(parser, data, buf);
     }
@@ -937,6 +975,20 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
                                      auth_fields,
                                      sizeof(auth_fields) / sizeof(*auth_fields),
                                      "{\"error\":\"authorization failed\"}");
+        cleanup_connection = true;
+      } else if (req_data->allow_header) {
+        InfluxHttpHeaderData method_fields[] = {
+            {"Allow", req_data->allow_header},
+            {"Content-Type", "application/json"},
+            {"Connection", "close"},
+        };
+        InfluxHttpWorkerSendResponse(
+            state,
+            fd,
+            405,
+            method_fields,
+            sizeof(method_fields) / sizeof(*method_fields),
+            "{\"error\":\"method not allowed\"}");
         cleanup_connection = true;
       } else if (entry->parser.status_code > 0) {
         JsonbParseState* jbstate = NULL;
