@@ -42,8 +42,18 @@ include $(PGXS)
 influxdb--$(VERSION_influxdb).sql: influxdb.sql
 	cp $< $@
 
+format: format-perl format-clang
+
 format-perl:
 	perltidy $(PERL_FILES)
+
+format-clang:
+	find src -name '*.c' -o -name '*.h' \
+	  | grep -v -e query_parser.c -e query_parser.h \
+	            -e query_scanner.c -e query_scanner.h \
+	            -e tokenizer_lex.c -e tokenizer_lex.h \
+	            -e http_parser.c -e http_parser.h \
+	  | xargs clang-format -i
 
 src/proto/tokenizer_lex.c src/proto/tokenizer_lex.h: src/proto/tokenizer_lex.l
 	flex -o src/proto/tokenizer_lex.c $<
