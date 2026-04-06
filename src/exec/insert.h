@@ -28,7 +28,6 @@ extern Datum process_text(PG_FUNCTION_ARGS);
 extern void process_text_internal(Oid nspid, char* buf, size_t len,
                                   int64 precision_multiplier);
 extern void InfluxInsertDataPoint(Oid nspid, InfluxDataPoint* data_point,
-                                  bool raise_error,
-                                  int64 precision_multiplier);
+                                  bool raise_error, int64 precision_multiplier);
 
 #endif /* INFLUXDB_INSERT_H_ */
