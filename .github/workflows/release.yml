@@ -1,0 +1,32 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  validate-version:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check tag matches extension version
+        run: |
+          tag="${GITHUB_REF#refs/tags/v}"
+          version=$(perl -ne 'print "$1" if /^default_version\s*=\s*'\''(\d+\.\d+)'\''/' influxdb.control)
+          if [ -z "$version" ]; then
+            echo "::error::Could not extract version from influxdb.control"
+            exit 1
+          fi
+          if [ "$tag" != "$version" ]; then
+            echo "::error::Tag v${tag} does not match extension version ${version} in influxdb.control"
+            exit 1
+          fi
+          echo "Tag v${tag} matches extension version ${version}"
+
+      - name: Create GitHub Release
+        run: gh release create "$GITHUB_REF_NAME" --generate-notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

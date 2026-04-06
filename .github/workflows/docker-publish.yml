@@ -1,8 +1,9 @@
 name: Docker Publish
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_run:
+    workflows: ["Release"]
+    types: [completed]
   workflow_dispatch:
 
 env:
@@ -10,6 +11,9 @@ env:
 
 jobs:
   publish:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -32,11 +36,7 @@ jobs:
       - name: Extract version from tag
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            version="${GITHUB_REF_NAME#v}"
-          else
-            version=$(perl -ne 'print "$1" if /^default_version.*(\d+\.\d+)/' influxdb.control)
-          fi
+          version=$(perl -ne 'print "$1" if /^default_version.*(\d+\.\d+)/' influxdb.control)
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
@@ -83,11 +83,7 @@ jobs:
       - name: Extract version from tag
         id: version
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            version="${GITHUB_REF_NAME#v}"
-          else
-            version=$(perl -ne 'print "$1" if /^default_version.*(\d+\.\d+)/' influxdb.control)
-          fi
+          version=$(perl -ne 'print "$1" if /^default_version.*(\d+\.\d+)/' influxdb.control)
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to Docker Hub
