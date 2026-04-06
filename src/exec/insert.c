@@ -210,8 +210,7 @@ static bool InfluxFillValues(InfluxDataPoint* data_point, TupleDesc tupdesc,
  * Insert a data point into a schema.
  */
 void InfluxInsertDataPoint(Oid nspid, InfluxDataPoint* data_point,
-                           bool raise_error,
-                           int64 precision_multiplier) {
+                           bool raise_error, int64 precision_multiplier) {
   char* cnulls;
   Oid relid;
   StringInfo measurement;
@@ -251,7 +250,11 @@ void InfluxInsertDataPoint(Oid nspid, InfluxDataPoint* data_point,
   values = palloc0_array(Datum, natts);
   cnulls = palloc_array(char, natts);
 
-  if (InfluxFillValues(data_point, tupdesc, values, cnulls, raise_error,
+  if (InfluxFillValues(data_point,
+                       tupdesc,
+                       values,
+                       cnulls,
+                       raise_error,
                        precision_multiplier)) {
     SPIPlanPtr plan = InfluxGetPlanFor(relation);
 

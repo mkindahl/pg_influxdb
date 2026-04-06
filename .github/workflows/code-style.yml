@@ -22,3 +22,15 @@ jobs:
         run: make format-perl
       - name: Check for formatting differences
         run: git diff --exit-code
+
+  clang-format:
+    name: Check C Code Style with clang-format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install clang-format
+        run: sudo apt-get update && sudo apt-get install -y clang-format
+      - name: Run clang-format
+        run: make format-clang
+      - name: Check for formatting differences
+        run: git diff --exit-code
