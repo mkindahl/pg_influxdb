@@ -1,14 +1,23 @@
 name: C/C++ CI
 
+# Action references are pinned to commit hashes to guard against supply-chain
+# attacks where a mutable tag is silently moved to a malicious commit.
+# To look up the hash for a version tag, run:
+#   gh api repos/<owner>/<repo>/git/ref/tags/<tag> --jq '.object.sha'
+
 on:
   push:
     branches: ["main"]
   pull_request:
     branches: ["main"]
 
+permissions: {}
+
 jobs:
   build-ubuntu:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -30,15 +39,20 @@ jobs:
         continue-on-error: true
         run: |
           pg_config
-          apt-file search `pg_config --includedir-server`/postgres.h
-          dpkg -S `pg_config --includedir-server`/postgres.h
-          ls -l `pg_config --includedir-server`
+          include_dir=$(pg_config --includedir-server)
+          apt-file search "$include_dir/postgres.h"
+          dpkg -S "$include_dir/postgres.h"
+          ls -l "$include_dir/postgres.h"
 
       - name: Create and configure PostgreSQL cluster
         run: |
           sudo pg_createcluster --start ${{ matrix.version }} test
           pg_lsclusters
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # Prevent git credentials from being written to disk; no git
+          # operations requiring authentication are performed after checkout.
+          persist-credentials: false
       - name: Make and install
         run: |
           make
@@ -48,8 +62,9 @@ jobs:
 
       - name: Run install tests
         run: |
-          export PGPORT=$(pg_lsclusters -j ${{ matrix.version }} test | jq -r '.[] | (.port)')
-          sudo -upostgres env PGPORT=$PGPORT createuser --superuser runner
+          export PGPORT
+          PGPORT=$(pg_lsclusters -j ${{ matrix.version }} test | jq -r '.[] | (.port)')
+          sudo -upostgres env PGPORT="$PGPORT" createuser --superuser runner
           make installcheck
         env:
           PG_CONFIG: /usr/lib/postgresql/${{ matrix.version }}/bin/pg_config
@@ -62,7 +77,7 @@ jobs:
           fi
           for F in tmp_check/log/*; do
             echo "=== $F ==="
-            cat $F
+            cat "$F"
           done
 
   docker-test:
@@ -79,15 +94,22 @@ jobs:
 
     name: Docker PG ${{ matrix.pg_version }} / ${{ matrix.variant }}
 
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # Prevent git credentials from being written to disk; no git
+          # operations requiring authentication are performed after checkout.
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Build image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
           file: docker/Dockerfile.${{ matrix.variant }}
@@ -108,7 +130,7 @@ jobs:
 
       - name: Wait for PostgreSQL and extension
         run: |
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             sleep 1
             result=$(docker exec pg_influxdb_test \
               psql -U postgres -d testdb -tAc \
@@ -130,7 +152,7 @@ jobs:
 
       - name: Wait for HTTP workers
         run: |
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             sleep 1
             count=$(docker exec pg_influxdb_test \
               psql -U postgres -tAc \
@@ -147,9 +169,11 @@ jobs:
           exit 1
 
       - name: Write line protocol point
+        env:
+          HTTP_PORT: ${{ steps.ports.outputs.http_port }}
         run: |
           status=$(curl -s -o /dev/null -w "%{http_code}" \
-            -X POST "http://localhost:${{ steps.ports.outputs.http_port }}/write?db=public" \
+            -X POST "http://localhost:${HTTP_PORT}/write?db=public" \
             -d 'cpu,host=server01 value=0.64')
           if [ "$status" != "204" ]; then
             echo "Expected 204 from /write, got ${status}"
@@ -180,15 +204,22 @@ jobs:
     runs-on: ubuntu-latest
     name: Docker defaults
 
+    permissions:
+      contents: read
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # Prevent git credentials from being written to disk; no git
+          # operations requiring authentication are performed after checkout.
+          persist-credentials: false
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Build image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
           file: docker/Dockerfile.bookworm
@@ -207,7 +238,7 @@ jobs:
 
       - name: Wait for PostgreSQL and extension
         run: |
-          for i in $(seq 1 60); do
+          for _ in $(seq 1 60); do
             sleep 1
             result=$(docker exec pg_influxdb_defaults \
               psql -U postgres -tAc \
@@ -236,9 +267,7 @@ jobs:
           # Verify each default value
           check_guc() {
             local guc="$1" expected="$2"
-            actual=$(docker exec pg_influxdb_defaults \
-              psql -U postgres -tAc "SHOW $guc")
-            actual=$(echo "$actual" | xargs)
+            actual=$(docker exec pg_influxdb_defaults psql -U postgres -tAc "SHOW $guc" | xargs)
             if [ "$actual" != "$expected" ]; then
               echo "FAIL: $guc = '$actual', expected '$expected'"
               exit 1
@@ -258,7 +287,7 @@ jobs:
       - name: Verify HTTP port default
         run: |
           http_port=$(docker port pg_influxdb_defaults 8086/tcp | head -1 | cut -d: -f2)
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             sleep 1
             count=$(docker exec pg_influxdb_defaults \
               psql -U postgres -tAc \
@@ -268,8 +297,7 @@ jobs:
               break
             fi
           done
-          status=$(curl -s -o /dev/null -w "%{http_code}" \
-            http://localhost:${http_port}/ping)
+          status=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${http_port}/ping")
           if [ "$status" != "204" ]; then
             echo "Expected 204 from /ping on default port, got ${status}"
             docker logs pg_influxdb_defaults

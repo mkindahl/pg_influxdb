@@ -1,17 +1,30 @@
 name: Copyright Check
 
+# Action references are pinned to commit hashes to guard against supply-chain
+# attacks where a mutable tag is silently moved to a malicious commit.
+# To look up the hash for a version tag, run:
+#   gh api repos/<owner>/<repo>/git/ref/tags/<tag> --jq '.object.sha'
+
 on:
   push:
     branches: ["main"]
   pull_request:
     branches: ["main"]
 
+permissions: {}
+
 jobs:
   copyright:
     name: Check Copyright Notices
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # Prevent git credentials from being written to disk; no git
+          # operations requiring authentication are performed after checkout.
+          persist-credentials: false
 
       - name: Check for copyright notices
         run: |
