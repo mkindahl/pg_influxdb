@@ -1,17 +1,30 @@
 name: Static Code Analysis
 
+# Action references are pinned to commit hashes to guard against supply-chain
+# attacks where a mutable tag is silently moved to a malicious commit.
+# To look up the hash for a version tag, run:
+#   gh api repos/<owner>/<repo>/git/ref/tags/<tag> --jq '.object.sha'
+
 on:
   push:
     branches: ["main"]
   pull_request:
     branches: ["main"]
 
+permissions: {}
+
 jobs:
   clang-tidy:
     name: Run clang-tidy Static Analysis
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # Prevent git credentials from being written to disk; no git
+          # operations requiring authentication are performed after checkout.
+          persist-credentials: false
 
       - name: Install dependencies
         run: |
@@ -27,9 +40,42 @@ jobs:
 
       - name: Run clang-tidy
         run: |
-          clang-tidy -p . $(find src -name '*.c' \
+          find src -name '*.c' \
             ! -name 'http_parser.c' \
             ! -name 'tokenizer_lex.c' \
             ! -name 'query_parser.c' \
-            ! -name 'query_scanner.c') \
-            --warnings-as-errors='*'
+            ! -name 'query_scanner.c' \
+            -print0 \
+          | xargs -0 clang-tidy -p . --warnings-as-errors='*'
+
+  actionlint:
+    name: Lint GitHub Actions workflows
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # Prevent git credentials from being written to disk; no git
+          # operations requiring authentication are performed after checkout.
+          persist-credentials: false
+      - uses: rhysd/actionlint@914e7df21a07ef503a81201c76d2b11c789d3fca # v1.7.12
+
+  zizmor:
+    name: Audit GitHub Actions workflows for security issues
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # Prevent git credentials from being written to disk; no git
+          # operations requiring authentication are performed after checkout.
+          persist-credentials: false
+      - name: Run zizmor 🌈
+        uses: zizmorcore/zizmor-action@b1d7e1fb5de872772f31590499237e7cce841e8e # v0.5.3
+        with:
+          advanced-security: "false"
+          annotations: "true"

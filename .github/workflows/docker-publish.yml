@@ -1,7 +1,15 @@
 name: Docker Publish
 
+# Action references are pinned to commit hashes to guard against supply-chain
+# attacks where a mutable tag is silently moved to a malicious commit.
+# To look up the hash for a version tag, run:
+#   gh api repos/<owner>/<repo>/git/ref/tags/<tag> --jq '.object.sha'
+
 on:
-  workflow_run:
+  # workflow_run is safe here: the upstream "Release" workflow only fires on
+  # push:tags, which requires write access to the repo, so fork PRs cannot
+  # trigger it and thereby reach this workflow's secrets.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
     workflows: ["Release"]
     types: [completed]
   workflow_dispatch:
@@ -31,7 +39,11 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # Prevent git credentials from being written to disk; no git
+          # operations requiring authentication are performed after checkout.
+          persist-credentials: false
 
       - name: Extract version from tag
         id: version
@@ -40,24 +52,24 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
         with:
           images: ${{ env.REGISTRY_IMAGE }}
           tags: |
             type=raw,value=${{ steps.version.outputs.version }}-pg${{ matrix.pg_version }}-${{ matrix.variant }}
 
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
         with:
           context: .
           file: docker/Dockerfile.${{ matrix.variant }}
@@ -78,7 +90,11 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          # Prevent git credentials from being written to disk; no git
+          # operations requiring authentication are performed after checkout.
+          persist-credentials: false
 
       - name: Extract version from tag
         id: version
@@ -87,18 +103,18 @@ jobs:
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - name: Log in to Docker Hub
-        uses: docker/login-action@v3
+        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
       - name: Tag convenience aliases
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
-          VERSION="${{ steps.version.outputs.version }}"
-
           # latest → newest version, PG 18, bookworm
           docker buildx imagetools create -t "$REGISTRY_IMAGE:latest" \
             "$REGISTRY_IMAGE:${VERSION}-pg18-bookworm"
