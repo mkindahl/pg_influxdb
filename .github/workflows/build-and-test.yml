@@ -7,9 +7,9 @@ name: C/C++ CI
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
   pull_request:
-    branches: ["main"]
+    branches: [ "main" ]
 
 permissions: {}
 
@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        version: [17, 18]
+        version: [ 17, 18 ]
     steps:
       - name: Install dependencies
         run: |
@@ -73,12 +73,30 @@ jobs:
         if: failure()
         run: |
           if [ -f regression.diffs ]; then
+            echo "## Regression diffs"
+            echo '```diff'
             cat regression.diffs
-          fi
+            echo '```'
+          fi >> "$GITHUB_STEP_SUMMARY"
           for F in tmp_check/log/*; do
-            echo "=== $F ==="
+            echo "## Log: $(basename "$F")"
+            echo '```'
             cat "$F"
-          done
+            echo '```'
+          done >> "$GITHUB_STEP_SUMMARY"
+      - name: Dump stack traces on failure
+        if: failure()
+        run: |
+          cores=(tmp_check/core.*)
+          if [ ${#cores[@]} -gt 0 ]; then
+            echo "## Core dumps and stack traces"
+            for core in "${cores[@]}"; do
+              echo "### Core dump: $core"
+              echo '```'
+              gdb --batch --quiet --ex "thread apply all bt full" --core "$core" 2>/dev/null || echo "Failed to analyze $core"
+              echo '```'
+            done
+          fi >> "$GITHUB_STEP_SUMMARY"
 
   docker-test:
     needs: build-ubuntu
@@ -86,8 +104,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        pg_version: [17, 18]
-        variant: [bookworm, bullseye, trixie, alpine]
+        pg_version: [ 17, 18 ]
+        variant: [ bookworm, bullseye, trixie, alpine ]
         exclude:
           - pg_version: 18
             variant: bullseye
@@ -141,7 +159,12 @@ jobs:
             fi
           done
           echo "Timed out waiting for PostgreSQL/extension"
-          docker logs pg_influxdb_test
+          {
+            echo "## Timed out waiting for PostgreSQL/extension"
+            echo '```'
+            docker logs pg_influxdb_test 2>&1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
           exit 1
 
       - name: Get HTTP port
@@ -165,7 +188,12 @@ jobs:
             fi
           done
           echo "Timed out waiting for HTTP workers"
-          docker logs pg_influxdb_test
+          {
+            echo "## Timed out waiting for HTTP workers"
+            echo '```'
+            docker logs pg_influxdb_test 2>&1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
           exit 1
 
       - name: Write line protocol point
@@ -176,10 +204,12 @@ jobs:
             -X POST "http://localhost:${HTTP_PORT}/write?db=public" \
             -d 'cpu,host=server01 value=0.64')
           if [ "$status" != "204" ]; then
-            echo "Expected 204 from /write, got ${status}"
-            docker logs pg_influxdb_test
+            echo "## /write returned ${status} (expected 204)"
+            echo '```'
+            docker logs pg_influxdb_test 2>&1
+            echo '```'
             exit 1
-          fi
+          fi >> "$GITHUB_STEP_SUMMARY"
           echo "/write returned 204"
 
       - name: Query data back
@@ -188,9 +218,12 @@ jobs:
             psql -U postgres -d testdb -tAc \
             "SELECT count(*) FROM cpu")
           if [ "$result" -lt 1 ]; then
-            echo "Expected at least 1 row in cpu table, got ${result}"
+            echo "## Expected at least 1 row in cpu table, got ${result}"
+            echo '```'
+            docker logs pg_influxdb_test 2>&1
+            echo '```'
             exit 1
-          fi
+          fi >> "$GITHUB_STEP_SUMMARY"
           echo "Data verified: ${result} row(s) in cpu table"
 
       - name: Stop container
@@ -249,7 +282,12 @@ jobs:
             fi
           done
           echo "Timed out waiting for PostgreSQL/extension"
-          docker logs pg_influxdb_defaults
+          {
+            echo "## Timed out waiting for PostgreSQL/extension"
+            echo '```'
+            docker logs pg_influxdb_defaults 2>&1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
           exit 1
 
       - name: Verify default GUCs
@@ -270,8 +308,12 @@ jobs:
             actual=$(docker exec pg_influxdb_defaults psql -U postgres -tAc "SHOW $guc" | xargs)
             if [ "$actual" != "$expected" ]; then
               echo "FAIL: $guc = '$actual', expected '$expected'"
+              echo "## GUC check failed: $guc = '$actual' (expected '$expected')"
+              echo '```'
+              docker logs pg_influxdb_defaults 2>&1
+              echo '```'
               exit 1
-            fi
+            fi >> "$GITHUB_STEP_SUMMARY"
             echo "OK: $guc = $actual"
           }
 
@@ -299,10 +341,12 @@ jobs:
           done
           status=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${http_port}/ping")
           if [ "$status" != "204" ]; then
-            echo "Expected 204 from /ping on default port, got ${status}"
-            docker logs pg_influxdb_defaults
+            echo "## /ping returned ${status} on default port (expected 204)"
+            echo '```'
+            docker logs pg_influxdb_defaults 2>&1
+            echo '```'
             exit 1
-          fi
+          fi >> "$GITHUB_STEP_SUMMARY"
           echo "/ping returned 204 on default HTTP port"
 
       - name: Stop container
