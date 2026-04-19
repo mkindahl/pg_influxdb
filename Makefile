@@ -34,8 +34,16 @@ REGRESS = tokenizer parser process create url_decode
 TAP_TESTS = 1
 
 PG_CPPFLAGS = -Isrc
-
 PG_CONFIG = pg_config
+
+# Link against OpenSSL when PostgreSQL was built with it (the default).
+# To compile without SSL support: make USE_SSL=0
+USE_SSL ?= $(if $(findstring with-openssl,$(shell $(PG_CONFIG) --configure)),1,0)
+ifeq ($(USE_SSL),1)
+  SHLIB_LINK += -lssl -lcrypto
+  PG_CPPFLAGS += -DINFLUXDB_USE_SSL
+endif
+
 PGXS := $(shell $(PG_CONFIG) --pgxs)
 include $(PGXS)
 
