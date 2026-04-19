@@ -48,14 +48,14 @@
 /* Maximum UDP datagram size (64 KB) */
 #define UDP_BUFFER_SIZE (64 * 1024)
 
-void InfluxUdpWorkerInitState(InfluxUdpWorkerState *state) {
+void InfluxUdpWorkerInitState(InfluxUdpWorkerState* state) {
   struct sockaddr_in addr;
   socklen_t addrlen = sizeof(addr);
 
   memset(state, 0, sizeof(*state));
 
   state->read_fd = InfluxNetworkUdpCreate(
-      influxdb_udp_service, (struct sockaddr *)&addr, &addrlen);
+      influxdb_udp_service, (struct sockaddr*)&addr, &addrlen);
 
   StartTransactionCommand();
   state->nspoid = get_namespace_oid(influxdb_udp_schema, false);
@@ -157,7 +157,7 @@ void InfluxUdpWorkerMain(Datum arg) {
   proc_exit(0);
 }
 
-void InfluxUdpWorkerInit(BackgroundWorker *worker) {
+void InfluxUdpWorkerInit(BackgroundWorker* worker) {
   memset(worker, 0, sizeof(*worker));
 
   worker->bgw_flags =

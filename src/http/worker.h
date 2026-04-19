@@ -127,11 +127,12 @@ extern void InfluxHttpWorkerConnectionInit(InfluxHttpConnectionEntry* entry);
 extern InfluxHttpConnectionEntry* InfluxHttpWorkerConnectionFetch(
     InfluxHttpWorkerState* state, int fd);
 extern void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state,
-                                         int fd, int status_code,
+                                         InfluxHttpConnectionEntry* entry,
+                                         int status_code,
                                          const InfluxHttpHeaderData field[],
                                          size_t nfields, const char* content);
 extern void InfluxHttpWorkerSendErrorResponse(InfluxHttpWorkerState* state,
-                                              int fd, int status_code,
-                                              Jsonb* content);
+                                              InfluxHttpConnectionEntry* entry,
+                                              int status_code, Jsonb* content);
 
 #endif /* HTTP_WORKER_H_ */

@@ -549,7 +549,8 @@ static const char* InfluxHttpStatusMessage(int status_code) {
  * that by remembering the value in the request header and using it
  * here.
  */
-void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state, int fd,
+void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state,
+                                  InfluxHttpConnectionEntry* entry,
                                   int status_code,
                                   const InfluxHttpHeaderData* field,
                                   size_t nfields, const char* body) {
@@ -596,7 +597,7 @@ void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state, int fd,
 
   elog(DEBUG1, "sending response:\n%s", response.data);
 
-  sent = write(fd, response.data, response.len);
+  sent = write(entry->read_fd, response.data, response.len);
   if (sent != response.len)
     ereport(LOG,
             errcode_for_socket_access(),
@@ -605,13 +606,14 @@ void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state, int fd,
                    response.len));
 }
 
-void InfluxHttpWorkerSendErrorResponse(InfluxHttpWorkerState* state, int fd,
+void InfluxHttpWorkerSendErrorResponse(InfluxHttpWorkerState* state,
+                                       InfluxHttpConnectionEntry* entry,
                                        int status_code, Jsonb* content) {
   const InfluxHttpHeaderData fields[] = {
       {"Content-Type", "application/json"},
       {"Connection", "close"},
   };
-  size_t nfields = sizeof(fields) / sizeof(*fields);
+  size_t nfields = lengthof(fields);
   StringInfoData text_content = {NULL};
 
   if (content) {
@@ -620,9 +622,9 @@ void InfluxHttpWorkerSendErrorResponse(InfluxHttpWorkerState* state, int fd,
   }
 
   InfluxHttpWorkerSendResponse(
-      state, fd, status_code, fields, nfields, text_content.data);
+      state, entry, status_code, fields, nfields, text_content.data);
 
-  InfluxHttpWorkerConnectionDelete(state, fd);
+  InfluxHttpWorkerConnectionDelete(state, entry->read_fd);
 }
 
 void InfluxHttpWorkerConnectionDelete(InfluxHttpWorkerState* state, int fd) {
@@ -882,26 +884,32 @@ void InfluxHttpWorkerConnectionAccept(InfluxHttpWorkerState* state) {
 void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
   MemoryContext oldcontext = CurrentMemoryContext;
   ResourceOwner oldowner = CurrentResourceOwner;
-  volatile bool cleanup_connection = false;
+  InfluxHttpConnectionEntry* entry;
   int err;
+  volatile bool cleanup_connection = false;
 
   pgstat_report_activity(STATE_RUNNING, "processing data");
+
+  /*
+   * We should always have an entry for the file descriptor since we add it when
+   * accepting the connection and remove it when closing the connection. If we
+   * don't have an entry, something is very wrong, so we log and return without
+   * doing anything.
+   */
+  entry = InfluxHttpWorkerConnectionFetch(state, fd);
+  if (entry == NULL) {
+    elog(LOG, "entry for file descriptor %d not found", fd);
+    return;
+  }
 
   PG_TRY();
   {
     StringInfoData request;
-    InfluxHttpConnectionEntry* entry;
     ssize_t parsed, len;
     char buffer[BUFFER_SIZE] = {0};
     InfluxHttpHeaderData fields[] = {
         {"Connection", "close"},
     };
-
-    entry = InfluxHttpWorkerConnectionFetch(state, fd);
-    if (entry == NULL) {
-      elog(LOG, "entry for file descriptor %d not found", fd);
-      break;
-    }
 
     MemoryContextSwitchTo(entry->mcxt);
 
@@ -910,9 +918,10 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
     /* Read data info a buffer */
     while (1) {
       /* Not a datagram channel so recv and read are equivalent */
-      len = read(fd, buffer, BUFFER_SIZE);
+      len = read(entry->read_fd, buffer, BUFFER_SIZE);
 
-      elog(DEBUG1, "received %ld bytes on %d:\n%s", len, fd, buffer);
+      elog(
+          DEBUG1, "received %ld bytes on %d:\n%s", len, entry->read_fd, buffer);
 
       /* If connection is shut down, we do not need to send a response. */
       if (len == 0) {
@@ -970,10 +979,10 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
             {"Connection", "close"},
         };
         InfluxHttpWorkerSendResponse(state,
-                                     fd,
+                                     entry,
                                      401,
                                      auth_fields,
-                                     sizeof(auth_fields) / sizeof(*auth_fields),
+                                     lengthof(auth_fields),
                                      "{\"error\":\"authorization failed\"}");
         cleanup_connection = true;
       } else if (req_data->allow_header) {
@@ -982,13 +991,12 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
             {"Content-Type", "application/json"},
             {"Connection", "close"},
         };
-        InfluxHttpWorkerSendResponse(
-            state,
-            fd,
-            405,
-            method_fields,
-            sizeof(method_fields) / sizeof(*method_fields),
-            "{\"error\":\"method not allowed\"}");
+        InfluxHttpWorkerSendResponse(state,
+                                     entry,
+                                     405,
+                                     method_fields,
+                                     lengthof(method_fields),
+                                     "{\"error\":\"method not allowed\"}");
         cleanup_connection = true;
       } else if (entry->parser.status_code > 0) {
         JsonbParseState* jbstate = NULL;
@@ -1003,7 +1011,7 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
         result = pushJsonbValue(&jbstate, WJB_END_OBJECT, NULL);
 
         InfluxHttpWorkerSendErrorResponse(
-            state, fd, entry->parser.status_code, JsonbValueToJsonb(result));
+            state, entry, entry->parser.status_code, JsonbValueToJsonb(result));
       } else if (parsed != request.len) {
         JsonbParseState* jbstate = NULL;
         JsonbValue* result;
@@ -1022,7 +1030,7 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
         result = pushJsonbValue(&jbstate, WJB_END_OBJECT, NULL);
 
         InfluxHttpWorkerSendErrorResponse(
-            state, fd, 400, JsonbValueToJsonb(result));
+            state, entry, 400, JsonbValueToJsonb(result));
       } else if (req_data->complete) {
         if (req_data->type == OPERATION_PING) {
           InfluxHttpHeaderData ping_fields[] = {
@@ -1030,25 +1038,19 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
               {"Connection", "close"},
           };
           InfluxHttpWorkerSendResponse(
-              state,
-              fd,
-              204,
-              ping_fields,
-              sizeof(ping_fields) / sizeof(*ping_fields),
-              NULL);
+              state, entry, 204, ping_fields, lengthof(ping_fields), NULL);
         } else if (req_data->type == OPERATION_QUERY) {
           InfluxHttpHeaderData query_fields[] = {
               {"Content-Type", "application/json"},
               {"Connection", "close"},
           };
           if (req_data->query_ok) {
-            InfluxHttpWorkerSendResponse(
-                state,
-                fd,
-                200,
-                query_fields,
-                sizeof(query_fields) / sizeof(*query_fields),
-                "{\"results\":[{}]}");
+            InfluxHttpWorkerSendResponse(state,
+                                         entry,
+                                         200,
+                                         query_fields,
+                                         lengthof(query_fields),
+                                         "{\"results\":[{}]}");
           } else {
             char body[512];
             snprintf(body,
@@ -1056,16 +1058,11 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
                      "{\"results\":[{\"error\":\"%s\"}]}",
                      req_data->query_error);
             InfluxHttpWorkerSendResponse(
-                state,
-                fd,
-                400,
-                query_fields,
-                sizeof(query_fields) / sizeof(*query_fields),
-                body);
+                state, entry, 400, query_fields, lengthof(query_fields), body);
           }
         } else {
           InfluxHttpWorkerSendResponse(
-              state, fd, 204, fields, sizeof(fields) / sizeof(*fields), NULL);
+              state, entry, 204, fields, lengthof(fields), NULL);
         }
         cleanup_connection = true;
       }
@@ -1093,12 +1090,12 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
     CurrentResourceOwner = oldowner;
 
     edata_jb = InfluxErrorDataGetJsonb(edata);
-    InfluxHttpWorkerSendErrorResponse(state, fd, 400, edata_jb);
+    InfluxHttpWorkerSendErrorResponse(state, entry, 400, edata_jb);
   }
   PG_END_TRY();
 
   MemoryContextSwitchTo(oldcontext);
-  if (cleanup_connection && InfluxHttpWorkerConnectionFetch(state, fd) != NULL)
+  if (cleanup_connection)
     InfluxHttpWorkerConnectionDelete(state, fd);
 }
 
