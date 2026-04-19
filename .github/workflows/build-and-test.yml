@@ -123,6 +123,12 @@ jobs:
           # operations requiring authentication are performed after checkout.
           persist-credentials: false
 
+      - name: Configure core dumps
+        run: |
+          sudo mkdir -p /tmp/cores
+          sudo chmod 1777 /tmp/cores
+          sudo sysctl -w kernel.core_pattern=/tmp/cores/%e.%p.core
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
 
@@ -143,6 +149,8 @@ jobs:
             -e POSTGRES_PASSWORD=testpass \
             -e INFLUXDB_DATABASE=testdb \
             -e INFLUXDB_AUTO_CREATE_TABLE=on \
+            --ulimit core=-1 \
+            --security-opt seccomp=unconfined \
             -P \
             pg_influxdb:test
 
@@ -232,6 +240,44 @@ jobs:
           docker stop pg_influxdb_test || true
           docker rm pg_influxdb_test || true
 
+      - name: Dump stack traces on failure
+        if: failure()
+        run: |
+          shopt -s nullglob
+          cores=(/tmp/cores/*.core)
+          if [ ${#cores[@]} -gt 0 ]; then
+            tmpdir=$(mktemp -d)
+
+            # Extract binaries from the stopped image for symbol resolution.
+            # The running container is already removed; create a temporary one
+            # from the image to copy files out.
+            docker create --name pg_influxdb_extract pg_influxdb:test
+            for path in /usr/lib/postgresql /usr/local/lib/postgresql /usr/local/bin; do
+              docker cp pg_influxdb_extract:"$path" "$tmpdir/" 2>/dev/null || true
+            done
+            docker rm pg_influxdb_extract
+
+            postgres_bin=$(find "$tmpdir" -name postgres -type f | head -1)
+
+            {
+              echo "## Core dumps and stack traces"
+              for core in "${cores[@]}"; do
+                echo "### $(basename "$core")"
+                echo '```'
+                if [ -n "$postgres_bin" ]; then
+                  gdb --batch --quiet \
+                    --ex "set solib-search-path $tmpdir" \
+                    --ex "thread apply all bt full" \
+                    "$postgres_bin" "$core" 2>&1 \
+                    || echo "gdb failed to analyze core"
+                else
+                  echo "postgres binary not found; cannot analyze core"
+                fi
+                echo '```'
+              done
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   docker-defaults:
     needs: build-ubuntu
     runs-on: ubuntu-latest
@@ -247,6 +293,12 @@ jobs:
           # Prevent git credentials from being written to disk; no git
           # operations requiring authentication are performed after checkout.
           persist-credentials: false
+
+      - name: Configure core dumps
+        run: |
+          sudo mkdir -p /tmp/cores
+          sudo chmod 1777 /tmp/cores
+          sudo sysctl -w kernel.core_pattern=/tmp/cores/%e.%p.core
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
@@ -266,6 +318,8 @@ jobs:
         run: |
           docker run -d --name pg_influxdb_defaults \
             -e POSTGRES_PASSWORD=testpass \
+            --ulimit core=-1 \
+            --security-opt seccomp=unconfined \
             -P \
             pg_influxdb:defaults
 
@@ -354,3 +408,41 @@ jobs:
         run: |
           docker stop pg_influxdb_defaults || true
           docker rm pg_influxdb_defaults || true
+
+      - name: Dump stack traces on failure
+        if: failure()
+        run: |
+          shopt -s nullglob
+          cores=(/tmp/cores/*.core)
+          if [ ${#cores[@]} -gt 0 ]; then
+            tmpdir=$(mktemp -d)
+
+            # Extract binaries from the stopped image for symbol resolution.
+            # The running container is already removed; create a temporary one
+            # from the image to copy files out.
+            docker create --name pg_influxdb_extract pg_influxdb:defaults
+            for path in /usr/lib/postgresql /usr/local/lib/postgresql /usr/local/bin; do
+              docker cp pg_influxdb_extract:"$path" "$tmpdir/" 2>/dev/null || true
+            done
+            docker rm pg_influxdb_extract
+
+            postgres_bin=$(find "$tmpdir" -name postgres -type f | head -1)
+
+            {
+              echo "## Core dumps and stack traces"
+              for core in "${cores[@]}"; do
+                echo "### $(basename "$core")"
+                echo '```'
+                if [ -n "$postgres_bin" ]; then
+                  gdb --batch --quiet \
+                    --ex "set solib-search-path $tmpdir" \
+                    --ex "thread apply all bt full" \
+                    "$postgres_bin" "$core" 2>&1 \
+                    || echo "gdb failed to analyze core"
+                else
+                  echo "postgres binary not found; cannot analyze core"
+                fi
+                echo '```'
+              done
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
