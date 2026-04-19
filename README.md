@@ -64,6 +64,13 @@ To build and install the extension:
 make && sudo make install
 ```
 
+SSL support is enabled by default when PostgreSQL was built with OpenSSL (the
+standard case for packages from [PGDG][pgdg]). To build without SSL support:
+
+```
+make USE_SSL=0 && sudo make USE_SSL=0 install
+```
+
 [pgdg]: https://wiki.postgresql.org/wiki/Apt
 
 ## Options
@@ -105,12 +112,40 @@ The following options are available:
   or `u=` and `p=` query parameters. The `/ping` endpoint is exempt
   from authentication. Default is `off`.
 
-> [!WARNING]
-> The extension does not support TLS. Credentials are sent in
-> cleartext over the wire (Base64-encoded in the `Authorization`
-> header or as query parameters). If you enable authentication, use
-> a TLS-terminating reverse proxy (e.g., nginx, HAProxy, or stunnel)
-> in front of the endpoint to protect credentials in transit.
+`influxdb.https` (`boolean`)
+: Enable TLS on the HTTP listener (`influxdb.http_service`). When
+  `on`, the listener uses the certificate and key from PostgreSQL's
+  `ssl_cert_file` and `ssl_key_file` GUC parameters. If `ssl_ca_file`
+  is also set, mutual TLS (client certificate authentication) is
+  enabled. TLS 1.2 is the minimum accepted version. Default is `off`.
+
+  If enabled, the port being used is by default taken from
+  `influxdb.http_service`. This makes it easy to just enable HTTPS by setting
+  `influxdb.https`. If you want to serve both HTTP and HTTPS at the same time,
+  you need to use the `influxdb.https_service` option.
+
+`influxdb.https_service` (`string`)
+: Service name or port number for a **dedicated HTTPS listener** that
+  runs alongside the existing HTTP listener. When set to a non-empty
+  value, an additional set of workers (equal in count to
+  `influxdb.http_workers`) starts on this port with TLS always
+  enabled. Certificate configuration is the same as for
+  `influxdb.https` — the `ssl_cert_file`, `ssl_key_file`, and
+  `ssl_ca_file` GUC parameters are used. Default is empty (disabled).
+
+  This parameter allows HTTP and HTTPS clients to be served
+  simultaneously on separate ports. For example:
+
+  ```
+  influxdb.http_service  = '8086'   # plain HTTP
+  influxdb.https_service = '8086'   # TLS on a second port
+  ```
+
+> [!NOTE]
+> When `influxdb.http_auth` is enabled without `influxdb.https` or
+> `influxdb.https_service`, credentials are sent in cleartext. Enable
+> one of the TLS options, or use a TLS-terminating reverse proxy, to
+> protect credentials in transit.
 
 ## Functions
 
@@ -156,7 +191,7 @@ the following MIT license applies:
 
 For all other files, the GNU Affero General Public License applies:
 
-    InfluxDB API to PostgreSQL. Copyright (C) 2025 Mats Kindahl
+    Copyright (C) 2025 Mats Kindahl
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU Affero General Public License as

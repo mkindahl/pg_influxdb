@@ -26,12 +26,16 @@
 #include <common/base64.h>
 #include <executor/spi.h>
 #include <libpq/crypt.h>
+#ifdef INFLUXDB_USE_SSL
+#include <miscadmin.h>
+#endif
 #include <nodes/parsenodes.h>
 #include <pgstat.h>
 #include <postmaster/bgworker.h>
 #include <postmaster/interrupt.h>
 #include <storage/ipc.h>
 #include <utils/backend_status.h>
+#include <utils/conffiles.h>
 #include <utils/elog.h>
 #include <utils/guc.h>
 #include <utils/hsearch.h>
@@ -64,7 +68,21 @@
 #include "influxdb.h"
 #include "network.h"
 
+#ifdef INFLUXDB_USE_SSL
+#include <openssl/err.h>
+#include <openssl/ssl.h>
+#endif
+
 #define BUFFER_SIZE (8 * 1024)
+
+#define SSL_CONFIG_ERROR(FMT, ...)                            \
+  do {                                                        \
+    ereport(ERROR,                                            \
+            errcode(ERRCODE_CONFIG_FILE_ERROR),               \
+            errmsg(FMT ": %s",                                \
+                   ##__VA_ARGS__,                             \
+                   ERR_error_string(ERR_get_error(), NULL))); \
+  } while (0)
 
 extern int query_parse_string(const char* input, Node** parsetree);
 
@@ -539,6 +557,49 @@ static const char* InfluxHttpStatusMessage(int status_code) {
 }
 
 /*
+ * Function: send_data
+ *
+ * Sends data over the network, either directly or via SSL. If SSL is enabled
+ * and the connection has an SSL object, uses SSL_write; otherwise, uses write.
+ *
+ * Returns:
+ *
+ *   The number of bytes sent, or -1 on error.
+ */
+#ifdef INFLUXDB_USE_SSL
+static ssize_t send_data(const InfluxHttpWorkerState* state,
+                         const InfluxHttpConnectionEntry* entry,
+                         StringInfo info) {
+  char* ptr = info->data;
+  int bytes;
+  ssize_t total;
+
+  if (entry == NULL || entry->ssl == NULL)
+    return write(entry->read_fd, info->data, info->len);
+
+  for (total = 0; total < info->len; total += bytes) {
+    bytes = SSL_write(entry->ssl, ptr + total, info->len - total);
+    if (bytes <= 0) {
+      int ssl_err = SSL_get_error(entry->ssl, bytes);
+      if (ssl_err == SSL_ERROR_WANT_WRITE)
+        continue;
+      ereport(LOG,
+              errmsg("SSL_write failed: %s",
+                     ERR_error_string(ERR_get_error(), NULL)));
+      break;
+    }
+  }
+  return total;
+}
+#else
+static ssize_t send_data(const InfluxHttpWorkerState* state,
+                         const InfluxHttpConnectionEntry* entry,
+                         StringInfo info) {
+  return write(entry->read_fd, info->data, info->len);
+}
+#endif
+
+/*
  * Function: InfluxHttpWorkerSendResponse
  *
  * We always close the connection so the connection close header field
@@ -597,7 +658,8 @@ void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state,
 
   elog(DEBUG1, "sending response:\n%s", response.data);
 
-  sent = write(entry->read_fd, response.data, response.len);
+  sent = send_data(state, entry, &response);
+
   if (sent != response.len)
     ereport(LOG,
             errcode_for_socket_access(),
@@ -647,6 +709,13 @@ void InfluxHttpWorkerConnectionDelete(InfluxHttpWorkerState* state, int fd) {
    */
   entry = hash_search(state->http_connection_hash, &fd, HASH_FIND, NULL);
   if (entry != NULL) {
+#ifdef INFLUXDB_USE_SSL
+    if (entry->ssl != NULL) {
+      SSL_shutdown(entry->ssl);
+      SSL_free(entry->ssl);
+      entry->ssl = NULL;
+    }
+#endif
     Assert(entry->mcxt != NULL);
     MemoryContextDelete(entry->mcxt);
   }
@@ -693,10 +762,174 @@ static void extend_epoll_set(InfluxHttpWorkerState* state, int fd) {
                    state->epoll_fd));
 }
 
+#ifdef INFLUXDB_USE_SSL
+
+/*
+ * Function: set_epoll_events
+ *
+ * Modify the epoll event mask for an already-registered file descriptor.
+ *
+ * Parameters:
+ *
+ *    state - InfluxDB HTTP worker state
+ *    fd    - file descriptor to modify
+ *    events - new event mask (e.g. EPOLLIN or EPOLLIN|EPOLLOUT)
+ */
+static void set_epoll_events(InfluxHttpWorkerState* state, int fd,
+                             uint32_t events) {
+  struct epoll_event ev = {.events = events, .data = {.fd = fd}};
+
+  if (epoll_ctl(state->epoll_fd, EPOLL_CTL_MOD, fd, &ev) == -1)
+    ereport(LOG,
+            errcode_for_socket_access(),
+            errmsg("could not modify epoll events for fd %d: %m", fd));
+}
+
+/*
+ * Function: get_ssl_config_path
+ *
+ * Get the absolute path for an SSL configuration option.  If optional is
+ * false and the option is not set, an error is reported.  If optional is
+ * true, *path is set to NULL when the option is not set.
+ *
+ * Parameters:
+ *
+ *    config_option - the GUC option name
+ *    optional      - if true, missing value sets *path to NULL instead of
+ *                    reporting an error
+ *    path          - pointer to store the resulting path
+ */
+static void get_ssl_config_path(const char* config_option, bool optional,
+                                char** path) {
+  const char* opt = GetConfigOption(config_option, false, false);
+  char* the_path = (opt && opt[0]) ? AbsoluteConfigLocation(opt, NULL) : NULL;
+  if (the_path == NULL && !optional)
+    ereport(
+        ERROR,
+        errcode(ERRCODE_CONFIG_FILE_ERROR),
+        errmsg("%s is not set; cannot enable influxdb.https", config_option));
+  *path = the_path;
+}
+
+/*
+ * Function: InfluxHttpWorkerInitSSL
+ *
+ * Create and configure an SSL_CTX for the HTTP listener using the
+ * certificate files from PostgreSQL's own ssl_cert_file, ssl_key_file,
+ * and ssl_ca_file GUC parameters.
+ *
+ * Returns the new SSL_CTX on success; calls ereport(ERROR) on failure.
+ */
+static void InfluxHttpWorkerInitSSL(InfluxHttpWorkerState* state,
+                                    bool use_tls) {
+  SSL_CTX* ctx = NULL;
+  char* cert_path;
+  char* key_path;
+  char* ca_path;
+
+  if (!use_tls) {
+    state->ssl_ctx = NULL;
+    return;
+  }
+
+  get_ssl_config_path("ssl_cert_file", false, &cert_path);
+  get_ssl_config_path("ssl_key_file", false, &key_path);
+  get_ssl_config_path("ssl_ca_file", true, &ca_path);
+
+  ctx = SSL_CTX_new(TLS_server_method());
+  if (ctx == NULL)
+    SSL_CONFIG_ERROR("could not create SSL context");
+
+  SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+  SSL_CTX_set_options(ctx, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
+
+  if (SSL_CTX_use_certificate_chain_file(ctx, cert_path) != 1) {
+    SSL_CTX_free(ctx);
+    SSL_CONFIG_ERROR("could not load server certificate \"%s\"", cert_path);
+  }
+
+  if (SSL_CTX_use_PrivateKey_file(ctx, key_path, SSL_FILETYPE_PEM) != 1) {
+    SSL_CTX_free(ctx);
+    SSL_CONFIG_ERROR("could not load private key \"%s\"", key_path);
+  }
+
+  if (SSL_CTX_check_private_key(ctx) != 1) {
+    SSL_CTX_free(ctx);
+    SSL_CONFIG_ERROR("private key does not match certificate");
+  }
+
+  if (ca_path != NULL) {
+    if (SSL_CTX_load_verify_locations(ctx, ca_path, NULL) != 1) {
+      SSL_CTX_free(ctx);
+      SSL_CONFIG_ERROR("could not load CA certificate \"%s\"", ca_path);
+    }
+    SSL_CTX_set_verify(
+        ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+  }
+
+  state->ssl_ctx = ctx;
+
+  elog(LOG, "InfluxDB HTTPS: TLS enabled using certificate \"%s\"", cert_path);
+}
+
+/*
+ * Function: InfluxHttpWorkerDoHandshake
+ *
+ * Attempt to advance the TLS handshake for a connection.  Because the
+ * socket is non-blocking, SSL_accept may need multiple calls.
+ *
+ * On WANT_READ, the epoll registration is left as EPOLLIN (the default).
+ * On WANT_WRITE, the epoll mask is temporarily extended to EPOLLIN|EPOLLOUT
+ * so that we are woken up when the socket becomes writable again.
+ * On completion, the mask is restored to EPOLLIN and tls_handshake_pending
+ * is cleared.
+ * On any other error, the connection is closed.
+ *
+ * Parameters:
+ *
+ *    state - InfluxDB HTTP worker state
+ *    fd    - file descriptor for the connection
+ *    entry - connection entry
+ */
+static void InfluxHttpWorkerDoHandshake(InfluxHttpWorkerState* state,
+                                        InfluxHttpConnectionEntry* entry) {
+  int rc = SSL_accept(entry->ssl);
+  if (rc == 1) {
+    entry->tls_handshake_pending = false;
+    set_epoll_events(state, entry->read_fd, EPOLLIN);
+    return;
+  }
+
+  switch (SSL_get_error(entry->ssl, rc)) {
+    case SSL_ERROR_WANT_READ:
+      set_epoll_events(state, entry->read_fd, EPOLLIN);
+      break;
+
+    case SSL_ERROR_WANT_WRITE:
+      set_epoll_events(state, entry->read_fd, EPOLLIN | EPOLLOUT);
+      break;
+
+    default:
+      ereport(LOG,
+              errmsg("TLS handshake failed on fd %d: %s",
+                     entry->read_fd,
+                     ERR_error_string(ERR_get_error(), NULL)));
+      InfluxHttpWorkerConnectionDelete(state, entry->read_fd);
+      break;
+  }
+}
+
+#endif /* INFLUXDB_USE_SSL */
+
 /*
  * Function: InfluxHttpWorkerConnectionInit
  *
  * Initialize a new connection entry.
+ *
+ * Note:
+ *
+ *   Do not use memset to zero the entire entry struct because it contains
+ *   fields that are set by hash_search and should not be overwritten.
  *
  * Parameters:
  *
@@ -708,6 +941,10 @@ void InfluxHttpWorkerConnectionInit(InfluxHttpConnectionEntry* entry) {
 
   entry->mcxt = AllocSetContextCreate(
       CurrentMemoryContext, "InfluxHttpConnection", ALLOCSET_SMALL_SIZES);
+#ifdef INFLUXDB_USE_SSL
+  entry->ssl = NULL;
+  entry->tls_handshake_pending = false;
+#endif
 
   memset(&entry->settings, 0, sizeof(entry->settings));
 
@@ -758,8 +995,19 @@ void InfluxHttpWorkerConnectionCreate(InfluxHttpWorkerState* state, int fd) {
   entry = hash_search(state->http_connection_hash, &fd, HASH_ENTER, &found);
   if (found)
     elog(WARNING, "adding connection %d a second time, not changing state", fd);
-  else
+  else {
     InfluxHttpWorkerConnectionInit(entry);
+#ifdef INFLUXDB_USE_SSL
+    if (state->ssl_ctx != NULL) {
+      entry->ssl = SSL_new(state->ssl_ctx);
+      if (entry->ssl == NULL)
+        SSL_CONFIG_ERROR("could not create SSL object for new connection");
+      SSL_set_fd(entry->ssl, fd);
+      entry->tls_handshake_pending = true;
+      InfluxHttpWorkerDoHandshake(state, entry);
+    }
+#endif
+  }
 }
 
 /*
@@ -773,9 +1021,11 @@ void InfluxHttpWorkerConnectionCreate(InfluxHttpWorkerState* state, int fd) {
  * incoming connections.
  *
  * Parameters:
- *   state - InfluxDB HTTP worker state to initialize
+ *   state   - InfluxDB HTTP worker state to initialize
+ *   service - service name or port number to listen on
  */
-void InfluxHttpWorkerInitState(InfluxHttpWorkerState* state) {
+void InfluxHttpWorkerInitState(InfluxHttpWorkerState* state,
+                               const char* service) {
   struct sockaddr_in addr;
   socklen_t addrlen = sizeof(addr);
 
@@ -793,16 +1043,14 @@ void InfluxHttpWorkerInitState(InfluxHttpWorkerState* state) {
   elog(DEBUG2, "%s: epoll file descriptor is %d", __func__, state->epoll_fd);
 
   /* Set up listen socket */
-  state->listen_fd = InfluxNetworkListenerCreate(
-      influxdb_http_service, (struct sockaddr*)&addr, &addrlen);
+  state->listen_fd =
+      InfluxNetworkListenerCreate(service, (struct sockaddr*)&addr, &addrlen);
   if (state->listen_fd == -1)
     ereport(ERROR,
             errcode_for_socket_access(),
             errmsg("could not create socket: %m"));
 
   extend_epoll_set(state, state->listen_fd);
-
-  elog(LOG, "InfluxDB HTTP Worker listening on port %d", addr.sin_port);
 }
 
 /*
@@ -817,7 +1065,7 @@ void InfluxHttpWorkerInitState(InfluxHttpWorkerState* state) {
  *    fd - file descriptor for connection where data is read
  */
 InfluxHttpConnectionEntry* InfluxHttpWorkerConnectionFetch(
-    InfluxHttpWorkerState* state, int fd) {
+    const InfluxHttpWorkerState* state, int fd) {
   if (state->http_connection_hash == NULL)
     return NULL;
   else
@@ -911,14 +1159,39 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
         {"Connection", "close"},
     };
 
+#ifdef INFLUXDB_USE_SSL
+    if (entry->tls_handshake_pending) {
+      InfluxHttpWorkerDoHandshake(state, entry);
+      break;
+    }
+#endif
+
     MemoryContextSwitchTo(entry->mcxt);
 
     initStringInfo(&request);
 
-    /* Read data info a buffer */
+    /* Read data into a buffer */
     while (1) {
-      /* Not a datagram channel so recv and read are equivalent */
-      len = read(entry->read_fd, buffer, BUFFER_SIZE);
+#ifdef INFLUXDB_USE_SSL
+      if (entry->ssl != NULL) {
+        len = SSL_read(entry->ssl, buffer, BUFFER_SIZE);
+        if (len <= 0) {
+          int ssl_err = SSL_get_error(entry->ssl, (int)len);
+          if (ssl_err == SSL_ERROR_ZERO_RETURN)
+            len = 0; /* clean TLS shutdown, treat as EOF */
+          else if (ssl_err == SSL_ERROR_WANT_READ ||
+                   ssl_err == SSL_ERROR_WANT_WRITE)
+            len = -1, errno = EAGAIN;
+          else
+            len = -1, errno = EIO;
+        }
+      } else {
+#endif
+        /* Not a datagram channel so recv and read are equivalent */
+        len = read(entry->read_fd, buffer, BUFFER_SIZE);
+#ifdef INFLUXDB_USE_SSL
+      }
+#endif
 
       elog(
           DEBUG1, "received %ld bytes on %d:\n%s", len, entry->read_fd, buffer);
@@ -934,7 +1207,7 @@ void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd) {
       /* If there are no more data, we start processing data */
       else if (len == -1 && (errno == EAGAIN || errno == EWOULDBLOCK))
         break;
-      /* If we had an error, send a respose and close connection */
+      /* If we had an error, send a response and close connection */
       else if (len == -1)
         ereport(
             ERROR, errcode_for_socket_access(), errmsg("recv call failed: %m"));
@@ -1109,6 +1382,7 @@ void InfluxHttpWorkerMain(Datum arg) {
   struct epoll_event events[10];
   InfluxHttpWorkerState state;
   ResourceOwner resowner;
+  InfluxHttpWorkerExtra extra;
 
   /* Establish signal handlers; once that's done, unblock signals. */
   pqsignal(SIGTERM, SignalHandlerForShutdownRequest);
@@ -1127,9 +1401,23 @@ void InfluxHttpWorkerMain(Datum arg) {
 
   CurrentResourceOwner = resowner;
 
-  pgstat_report_activity(STATE_RUNNING, "initializing worker state");
+  pgstat_report_activity(STATE_RUNNING, "initializing HTTP worker state");
 
-  InfluxHttpWorkerInitState(&state);
+  memcpy(&extra, &MyBgworkerEntry->bgw_extra, sizeof(extra));
+
+  {
+#ifdef INFLUXDB_USE_SSL
+    const char* service = extra.flags.https_listener ? influxdb_https_service
+                                                     : influxdb_http_service;
+#else
+    const char* service = influxdb_http_service;
+#endif
+    InfluxHttpWorkerInitState(&state, service);
+#ifdef INFLUXDB_USE_SSL
+    InfluxHttpWorkerInitSSL(&state,
+                            extra.flags.https_listener || influxdb_https);
+#endif
+  }
 
   while (!ShutdownRequestPending) {
     int nfds;
@@ -1171,6 +1459,13 @@ void InfluxHttpWorkerMain(Datum arg) {
     CurrentResourceOwner = resowner;
   }
 
+#ifdef INFLUXDB_USE_SSL
+  if (state.ssl_ctx != NULL) {
+    SSL_CTX_free(state.ssl_ctx);
+    state.ssl_ctx = NULL;
+  }
+#endif
+
   /*
    * Exiting with exit code 0 since this is a proper shutdown and should not
    * trigger a restart.
@@ -1178,7 +1473,8 @@ void InfluxHttpWorkerMain(Datum arg) {
   proc_exit(0);
 }
 
-void InfluxHttpWorkerInit(BackgroundWorker* worker) {
+void InfluxHttpWorkerInit(BackgroundWorker* worker,
+                          InfluxHttpWorkerExtra* extra) {
   memset(worker, 0, sizeof(*worker));
 
   /* Shared memory access is necessary to connect to the database. */
@@ -1190,8 +1486,20 @@ void InfluxHttpWorkerInit(BackgroundWorker* worker) {
   worker->bgw_start_time = BgWorkerStart_RecoveryFinished;
   sprintf(worker->bgw_library_name, INFLUXDB_LIBRARY_NAME);
   sprintf(worker->bgw_function_name, INFLUXDB_HTTP_FUNCTION_NAME);
-  snprintf(worker->bgw_name, BGW_MAXLEN, "InfluxDB HTTP protocol worker");
-  snprintf(worker->bgw_type, BGW_MAXLEN, "InfluxDB HTTP protocol worker");
+  snprintf(worker->bgw_name,
+           BGW_MAXLEN,
+           "InfluxDB %s protocol worker",
+           extra->flags.https_listener ? "HTTPS" : "HTTP");
+  snprintf(worker->bgw_type,
+           BGW_MAXLEN,
+           "InfluxDB %s protocol worker",
+           extra->flags.https_listener ? "HTTPS" : "HTTP");
+
+  /*
+   * Encode listener type in bgw_extra so InfluxHttpWorkerMain can distinguish
+   * HTTP workers (bgw_extra[0] == 0) from HTTPS workers (bgw_extra[0] == 1).
+   */
+  memcpy(worker->bgw_extra, extra, sizeof(*extra));
 
   if (influxdb_http_worker_restart_time > 0)
     worker->bgw_restart_time = influxdb_http_worker_restart_time;

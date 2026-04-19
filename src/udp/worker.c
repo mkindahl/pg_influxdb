@@ -83,7 +83,7 @@ void InfluxUdpWorkerMain(Datum arg) {
 
   CurrentResourceOwner = resowner;
 
-  pgstat_report_activity(STATE_RUNNING, "initializing worker state");
+  pgstat_report_activity(STATE_RUNNING, "initializing UDP worker state");
 
   InfluxUdpWorkerInitState(&state);
 

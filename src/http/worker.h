@@ -26,6 +26,10 @@
 #include <utils/hsearch.h>
 #include <utils/jsonb.h>
 
+#ifdef INFLUXDB_USE_SSL
+#include <openssl/ssl.h>
+#endif
+
 #include "http_parser.h"
 
 /*
@@ -48,7 +52,28 @@ typedef struct InfluxHttpConnectionEntry {
   http_parser_settings settings;
   http_parser parser;
   MemoryContext mcxt;
+#ifdef INFLUXDB_USE_SSL
+  SSL* ssl;                   /* NULL when HTTPS is disabled */
+  bool tls_handshake_pending; /* true while SSL_accept has not completed */
+#endif
 } InfluxHttpConnectionEntry;
+
+/*
+ * Struct: InfluxHttpWorkerFlags
+ *
+ * Flags for the HTTP worker. These are copied into bgw_extra of the
+ * BackgroundWorker struct and can be used to distinguish between different
+ * types of workers, e.g., HTTP vs HTTPS.
+ */
+typedef struct InfluxHttpWorkerExtra {
+  struct {
+    unsigned int https_listener : 1;
+  } flags;
+} InfluxHttpWorkerExtra;
+
+_Static_assert(
+    sizeof(InfluxHttpWorkerExtra) <= BGW_EXTRALEN,
+    "InfluxHttpWorkerExtra must fit within bgw_extra of BackgroundWorker");
 
 /*
  * Struct: InfluxHttpWorkerState
@@ -59,6 +84,9 @@ typedef struct InfluxHttpWorkerState {
   int epoll_fd;
   int listen_fd;
   HTAB* http_connection_hash;
+#ifdef INFLUXDB_USE_SSL
+  SSL_CTX* ssl_ctx; /* NULL when HTTPS is disabled */
+#endif
 } InfluxHttpWorkerState;
 
 /*
@@ -115,9 +143,11 @@ typedef struct InfluxHttpRequestData {
 
 extern PGDLLEXPORT void InfluxHttpWorkerMain(Datum arg);
 
-extern void InfluxHttpWorkerInit(BackgroundWorker* worker);
+extern void InfluxHttpWorkerInit(BackgroundWorker* worker,
+                                 InfluxHttpWorkerExtra* extra);
 extern void InfluxHttpWorkerProcessData(InfluxHttpWorkerState* state, int fd);
-extern void InfluxHttpWorkerInitState(InfluxHttpWorkerState* state);
+extern void InfluxHttpWorkerInitState(InfluxHttpWorkerState* state,
+                                      const char* service);
 extern void InfluxHttpWorkerConnectionAccept(InfluxHttpWorkerState* state);
 extern void InfluxHttpWorkerConnectionCreate(InfluxHttpWorkerState* state,
                                              int fd);
@@ -125,7 +155,7 @@ extern void InfluxHttpWorkerConnectionDelete(InfluxHttpWorkerState* state,
                                              int fd);
 extern void InfluxHttpWorkerConnectionInit(InfluxHttpConnectionEntry* entry);
 extern InfluxHttpConnectionEntry* InfluxHttpWorkerConnectionFetch(
-    InfluxHttpWorkerState* state, int fd);
+    const InfluxHttpWorkerState* state, int fd);
 extern void InfluxHttpWorkerSendResponse(const InfluxHttpWorkerState* state,
                                          InfluxHttpConnectionEntry* entry,
                                          int status_code,

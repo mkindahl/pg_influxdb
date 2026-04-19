@@ -51,8 +51,14 @@ if [ "$target_db" != "${POSTGRES_DB:-postgres}" ]; then
 EOSQL
 fi
 
-# --- Create extension ---------------------------------------------------
+# --- Create UDP schema and extension ------------------------------------
+#
+# The UDP schema (influxdb.udp_schema) must exist before the background
+# workers start or they will fail with "schema does not exist".  Create
+# it here, before the extension, so it is present when the server that
+# loads shared_preload_libraries = 'influxdb' first comes up.
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$target_db" <<-EOSQL
+    CREATE SCHEMA IF NOT EXISTS "${INFLUXDB_UDP_SCHEMA}";
     CREATE EXTENSION IF NOT EXISTS influxdb;
 EOSQL

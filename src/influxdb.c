@@ -53,15 +53,61 @@ char* influxdb_database = NULL;
 int influxdb_http_workers = 4;
 int influxdb_http_worker_restart_time = INFLUXDB_DEFAULT_HTTP_RESTART_TIME;
 bool influxdb_http_auth = false;
+#ifdef INFLUXDB_USE_SSL
+bool influxdb_https = false;
+char* influxdb_https_service = NULL;
+#endif
 
 char* influxdb_udp_service = INFLUXDB_DEFAULT_UDP_SERVICE;
 char* influxdb_udp_schema = INFLUXDB_DEFAULT_SCHEMA_NAME;
 int influxdb_udp_read_buffer = INFLUXDB_DEFAULT_UDP_READ_BUFFER;
 int influxdb_udp_workers = INFLUXDB_DEFAULT_UDP_WORKERS;
 
-void _PG_init(void) {
-  BackgroundWorker worker, udp_worker;
+/*
+ * Function: InitHttpWorkers
+ * Initialize the HTTP workers.
+ */
+static void InitHttpWorkers(void) {
+  BackgroundWorker worker;
+  InfluxHttpWorkerExtra http_extra = {.flags.https_listener = false};
 
+  InfluxHttpWorkerInit(&worker, &http_extra);
+  for (int i = 0; i < influxdb_http_workers; i++)
+    RegisterBackgroundWorker(&worker);
+}
+
+#ifdef INFLUXDB_USE_SSL
+/*
+ * Function: InitHttpsWorkers
+ * Initialize the HTTPS workers.
+ *
+ * Note that this spawns a separate set of workers for handling HTTPS
+ * connections. This allows HTTP and HTTPS to be served simultaneously on
+ * separate ports.
+ *
+ * If the service is not configured, the main HTTP workers will handle TLS if
+ * enabled via the influxdb.https setting, but there will be no separate HTTPS
+ * listener.
+ */
+static void InitHttpsWorkers(void) {
+  BackgroundWorker worker;
+  InfluxHttpWorkerExtra https_extra = {.flags.https_listener = true};
+
+  InfluxHttpWorkerInit(&worker, &https_extra);
+  for (int i = 0; i < influxdb_http_workers; i++)
+    RegisterBackgroundWorker(&worker);
+}
+#endif
+
+static void InitUdpWorkers(void) {
+  BackgroundWorker worker;
+
+  InfluxUdpWorkerInit(&worker);
+  for (int i = 0; i < influxdb_udp_workers; i++)
+    RegisterBackgroundWorker(&worker);
+}
+
+void _PG_init(void) {
   /* We use PGC_USERSET to be able to debug this. It could be PGC_SIGHUP. */
   DefineCustomBoolVariable(
       "influxdb.keep_quotes",
@@ -161,6 +207,36 @@ void _PG_init(void) {
       NULL,           /* assign hook */
       NULL);          /* show hook */
 
+#ifdef INFLUXDB_USE_SSL
+  DefineCustomBoolVariable(
+      "influxdb.https",
+      "Enable TLS on the HTTP listener.",
+      "When enabled, the HTTP listener uses TLS. Certificate and key files "
+      "are read from the ssl_cert_file and ssl_key_file GUC parameters.",
+      &influxdb_https,
+      false,          /* boot value */
+      PGC_POSTMASTER, /* option context */
+      0,              /* option flags */
+      NULL,           /* check hook */
+      NULL,           /* assign hook */
+      NULL);          /* show hook */
+
+  DefineCustomStringVariable(
+      "influxdb.https_service",
+      "Service name or port for a dedicated HTTPS listener.",
+      "When set, an additional set of workers listens on this port using TLS. "
+      "This allows HTTP and HTTPS to be served simultaneously on separate "
+      "ports. Certificate and key files are read from the ssl_cert_file and "
+      "ssl_key_file GUC parameters. An empty string disables this listener.",
+      &influxdb_https_service,
+      NULL,           /* boot value */
+      PGC_POSTMASTER, /* option context */
+      0,              /* option flags */
+      NULL,           /* check hook */
+      NULL,           /* assign hook */
+      NULL);          /* show hook */
+#endif
+
   DefineCustomStringVariable(
       "influxdb.udp_service",
       "Service name or port for UDP connections.",
@@ -218,11 +294,20 @@ void _PG_init(void) {
 
   MarkGUCPrefixReserved("influxdb");
 
-  InfluxHttpWorkerInit(&worker);
-  for (int i = 0; i < influxdb_http_workers; i++)
-    RegisterBackgroundWorker(&worker);
+  InitHttpWorkers();
+  InitUdpWorkers();
 
-  InfluxUdpWorkerInit(&udp_worker);
-  for (int i = 0; i < influxdb_udp_workers; i++)
-    RegisterBackgroundWorker(&udp_worker);
+#ifdef INFLUXDB_USE_SSL
+  /*
+   * Initialize HTTPS workers if the service is configured. Note that this
+   * spawns a separate set of workers for handling HTTPS connections. This
+   * allows HTTP and HTTPS to be served simultaneously on separate ports.
+   *
+   * If the service is not configured, the main HTTP workers will handle TLS if
+   * enabled via the influxdb.https setting, but there will be no separate HTTPS
+   * listener.
+   */
+  if (influxdb_https_service != NULL && influxdb_https_service[0] != '\0')
+    InitHttpsWorkers();
+#endif
 }

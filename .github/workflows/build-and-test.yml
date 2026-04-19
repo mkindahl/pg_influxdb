@@ -18,10 +18,17 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    name: build PG ${{ matrix.version }} / SSL ${{ matrix.ssl_desc }}
     strategy:
       fail-fast: false
       matrix:
         version: [ 17, 18 ]
+        ssl: [ 0, 1 ]
+        include:
+          - ssl: 0
+            ssl_desc: "off"
+          - ssl: 1
+            ssl_desc: "on"
     steps:
       - name: Install dependencies
         run: |
@@ -55,8 +62,8 @@ jobs:
           persist-credentials: false
       - name: Make and install
         run: |
-          make
-          sudo make install
+          make USE_SSL=${{ matrix.ssl }}
+          sudo make USE_SSL=${{ matrix.ssl  }} install
         env:
           PG_CONFIG: /usr/lib/postgresql/${{ matrix.version }}/bin/pg_config
 
@@ -65,7 +72,7 @@ jobs:
           export PGPORT
           PGPORT=$(pg_lsclusters -j ${{ matrix.version }} test | jq -r '.[] | (.port)')
           sudo -upostgres env PGPORT="$PGPORT" createuser --superuser runner
-          make installcheck
+          make USE_SSL=${{ matrix.ssl }} installcheck
         env:
           PG_CONFIG: /usr/lib/postgresql/${{ matrix.version }}/bin/pg_config
 
@@ -344,6 +351,29 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
           exit 1
 
+      - name: Wait for HTTP workers
+        run: |
+          for _ in $(seq 1 30); do
+            sleep 1
+            count=$(docker exec pg_influxdb_defaults \
+              psql -U postgres -tAc \
+              "SELECT count(*) FROM pg_stat_activity WHERE backend_type LIKE 'InfluxDB%HTTP%' AND state = 'idle'" 2>/dev/null || echo 0)
+            if [ "$count" -gt 0 ] 2>/dev/null; then
+              docker exec pg_influxdb_defaults \
+                psql -U postgres -c "SELECT pid, backend_type, state FROM pg_stat_activity WHERE backend_type LIKE 'InfluxDB%HTTP%'"
+              echo "HTTP workers ready (${count} running)"
+              exit 0
+            fi
+          done
+          echo "Timed out waiting for HTTP workers"
+          {
+            echo "## Timed out waiting for HTTP workers"
+            echo '```'
+            docker logs pg_influxdb_defaults 2>&1
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit 1
+
       - name: Verify default GUCs
         run: |
           docker exec pg_influxdb_defaults \
@@ -371,28 +401,20 @@ jobs:
             echo "OK: $guc = $actual"
           }
 
-          check_guc influxdb.database          postgres
-          check_guc influxdb.http_service      8086
-          check_guc influxdb.http_workers      4
-          check_guc influxdb.http_auth         off
-          check_guc influxdb.udp_service       8089
-          check_guc influxdb.udp_workers       4
-          check_guc influxdb.udp_schema        measurements
-          check_guc influxdb.auto_create_table on
+          check_guc influxdb.database                postgres
+          check_guc influxdb.http_service            8086
+          check_guc influxdb.http_workers            4
+          check_guc influxdb.http_auth               off
+          check_guc influxdb.http_worker_restart_time 20
+          check_guc influxdb.https                   off
+          check_guc influxdb.udp_service             8089
+          check_guc influxdb.udp_workers             4
+          check_guc influxdb.udp_schema              measurements
+          check_guc influxdb.auto_create_table       on
 
       - name: Verify HTTP port default
         run: |
           http_port=$(docker port pg_influxdb_defaults 8086/tcp | head -1 | cut -d: -f2)
-          for _ in $(seq 1 30); do
-            sleep 1
-            count=$(docker exec pg_influxdb_defaults \
-              psql -U postgres -tAc \
-              "SELECT count(*) FROM pg_stat_activity WHERE backend_type = 'InfluxDB HTTP protocol worker'" 2>/dev/null || echo 0)
-            if [ "$count" -gt 0 ] 2>/dev/null; then
-              echo "HTTP workers ready (${count} running)"
-              break
-            fi
-          done
           status=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${http_port}/ping")
           if [ "$status" != "204" ]; then
             echo "## /ping returned ${status} on default port (expected 204)"

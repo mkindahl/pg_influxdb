@@ -27,7 +27,12 @@
 #include <utils/elog.h>
 
 #include <memory.h>
+#include <netdb.h>
 #include <unistd.h>
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 
 #include "influxdb.h"
 
@@ -75,15 +80,55 @@ static int InfluxResolveAddress(const char* service, int socktype,
   hints.ai_family = AF_INET;
   hints.ai_flags = AI_PASSIVE;
   hints.ai_socktype = socktype;
-  hints.ai_protocol = 0;
-  hints.ai_canonname = NULL;
-  hints.ai_addr = NULL;
-  hints.ai_next = NULL;
 
   err = pg_getaddrinfo_all(NULL, service, &hints, &addrs);
-  if (err)
+  if (err) {
+    /*
+     * Some minimal container environments (e.g. Alpine with musl libc)
+     * return EAI_NONAME even for numeric port strings when the network
+     * namespace is not fully initialised.  As a last resort, attempt to
+     * bind directly to INADDR_ANY on the numeric port parsed from service.
+     */
+    char* endptr;
+    long port = strtol(service, &endptr, 10);
+
+    if (*endptr == '\0' && port > 0 && port <= 65535) {
+      struct sockaddr_in sin;
+
+      fd = socket(AF_INET, socktype, 0);
+      if (fd == PGINVALID_SOCKET)
+        ereport(ERROR,
+                (errcode_for_socket_access(),
+                 errmsg("could not create socket for port %ld: %m", port)));
+
+      (*config)(fd);
+
+      memset(&sin, 0, sizeof(sin));
+      sin.sin_family = AF_INET;
+      sin.sin_addr.s_addr = htonl(INADDR_ANY);
+      sin.sin_port = htons((uint16_t)port);
+
+      if (bind(fd, (struct sockaddr*)&sin, sizeof(sin)) < 0) {
+        close(fd);
+        ereport(ERROR,
+                (errcode_for_socket_access(),
+                 errmsg("could not bind to port %ld: %m", port)));
+      }
+
+      if (addr_out) {
+        Assert(sizeof(sin) <= *addrlen);
+        *addrlen = sizeof(sin);
+        memcpy(addr_out, &sin, sizeof(sin));
+      }
+
+      return fd;
+    }
+
     ereport(ERROR,
-            (errmsg("could not resolve service: %s\n", gai_strerror(err))));
+            (errmsg("could not resolve service \"%s\": %s",
+                    service,
+                    gai_strerror(err))));
+  }
 
   for (addr = addrs; addr; addr = addr->ai_next) {
     fd = socket(addr->ai_family, socktype, addr->ai_protocol);
@@ -108,7 +153,7 @@ static int InfluxResolveAddress(const char* service, int socktype,
   Assert(fd >= 0);
 
   if (addr_out) {
-    Assert(addr->ai_addrlen <= addrlen);
+    Assert(addr->ai_addrlen <= *addrlen);
     *addrlen = addr->ai_addrlen;
     memcpy(addr_out, addr->ai_addr, addr->ai_addrlen);
   }
