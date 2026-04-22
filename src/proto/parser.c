@@ -88,6 +88,21 @@ static inline bool TokenIsValue(InfluxToken token) {
   }
 }
 
+static void UnescapeTokenValue(InfluxToken* token, JsonbValue* jb_val) {
+  StringInfo info;
+  switch (token->kind) {
+    case TOKEN_KIND_STRING:
+      info = UnescapeString(token->buf, token->len);
+      break;
+    case TOKEN_KIND_SYMBOL:
+      info = UnescapeSymbol(token->buf, token->len);
+      break;
+  }
+  jb_val->type = jbvString;
+  jb_val->val.string.len = info->len;
+  jb_val->val.string.val = info->data;
+}
+
 const char* KindName(int kind) {
   static const char* kind_name[] = {
       [TOKEN_KIND_END_OF_INPUT] = "END",
@@ -217,9 +232,36 @@ void InfluxParseDataPoint(InfluxParseState* state,
     SYNTAX_ERROR("end of line or end of input", &token);
 }
 
-static StringInfo RemoveBackslashes(const char* str, size_t len) {
+/*
+ * Unescape a double-quoted string field value.  Only \" → " and \\ → \ are
+ * defined escape sequences; any other \x is kept as the two characters \x.
+ */
+static StringInfo UnescapeString(const char* str, size_t len) {
   StringInfo info = makeStringInfo();
-  const char* ptr = str;
+
+  const char* const end = str + len;
+
+  for (const char* ptr = str; ptr < end; ++ptr) {
+    if (*ptr == '\\' && ptr + 1 < end) {
+      char next = *(ptr + 1);
+      if (next != '\\' && next != '"')
+        appendStringInfoCharMacro(info, '\\');
+      appendStringInfoCharMacro(info, next);
+      ++ptr;
+    } else
+      appendStringInfoCharMacro(info, *ptr);
+  }
+
+  return info;
+}
+
+/*
+ * Strip backslashes from a symbol (measurement name, tag key/value, field
+ * key).  In symbols, \ escapes , = and space by simple backslash removal.
+ */
+static StringInfo UnescapeSymbol(const char* str, size_t len) {
+  StringInfo info = makeStringInfo();
+  const char* ptr;
 
   for (ptr = str; ptr < str + len; ++ptr) {
     if (*ptr != '\\')
@@ -232,13 +274,14 @@ static StringInfo RemoveBackslashes(const char* str, size_t len) {
 StringInfo InfluxTokenGetString(InfluxToken* token) {
   switch (token->kind) {
     case TOKEN_KIND_STRING:
+      return UnescapeString(token->buf, token->len);
     case TOKEN_KIND_SYMBOL:
     case TOKEN_KIND_BOOLEAN:
     case TOKEN_KIND_FLOAT:
     case TOKEN_KIND_INTEGER:
     case TOKEN_KIND_UINTEGER:
     case TOKEN_KIND_NUMBER:
-      return RemoveBackslashes(token->buf, token->len);
+      return UnescapeSymbol(token->buf, token->len);
     default:
       elog(ERROR,
            "cannot convert token kind %d containing %s to string",
@@ -255,10 +298,7 @@ JsonbValue InfluxTokenGetJsonbValue(InfluxToken* token) {
   switch (token->kind) {
     case TOKEN_KIND_STRING:
     case TOKEN_KIND_SYMBOL:
-      info = RemoveBackslashes(token->buf, token->len);
-      jb_val.type = jbvString;
-      jb_val.val.string.len = info->len;
-      jb_val.val.string.val = info->data;
+      UnescapeTokenValue(token, &jb_val);
       break;
 
     case TOKEN_KIND_BOOLEAN:
@@ -453,7 +493,7 @@ Datum tokenize(PG_FUNCTION_ARGS) {
     HeapTuple tuple;
     Datum result;
 
-    Assert(tupdesc->natts == 2);
+    Assert(funcctx->tuple_desc->natts == 2);
 
     nulls[0] = false;
     values[0] = Int32GetDatum(token.kind);
