@@ -1,4 +1,4 @@
-# InfluxDB API to PostgreSQL
+# PgInfluxDB: InfluxDB API to PostgreSQL
 
 This extension implements a [InfluxDB API][influx-api] to PostgreSQL
 allowing you to interact with PostgreSQL as if it was an InfluxDB
@@ -7,19 +7,24 @@ instance.
 Currently, it supports writing the InfluxDB Line Protocol to a
 PostgreSQL database.
 
-This is a re-implementation of the work done in
-[`pg_influx`][pg-influx] and focused on providing a more complete API
-resembling [InfluxDB API][influx-api] version 1 and version 2 with
-both UDP and HTTP support (although only version 1 is supported
-currently).
+This is a re-implementation of the work done in [`pg_influx`][1]
+focused on providing a more complete API resembling [InfluxDB API][2]
+version 1 and version 2 (although only version 1 is supported
+currently) with both UDP and HTTP support .
 
 It also aims to have better support for the InfluxDB Line Protocol and
-be a true replacement for using InfluxDB to the extent that it is
-possible.
+be a true replacement for using InfluxDB in a limited set of
+scenarios, in particular supporting [Telegraf][3] endpoints speaking
+the [InfluxDB Line Protocol][4].
+
+## Documentation
 
 - [InfluxDB Line Protocol](docs/line_protocol.md)
-- [InfluxDB HTTP Endpoint](docs/http_endpoint.md)
-- [InfluxDB Docker Image](docs/docker.md)
+- [PostgreSQL InfluxDB Extension HTTP Endpoint](docs/http/index.md)
+- [PostgreSQL InfluxDB Extension UDP Endpoint](docs/udp.md)
+- [PostgreSQL InfluxDB Extension Docker Image](docs/docker.md)
+- [PostgreSQL InfluxDB Extension Options](docs/options.md)
+- [PostgreSQL InfluxDB Extension Functions](docs/functions.md)
 
 ## Dependencies
 
@@ -49,16 +54,25 @@ sudo apt-get install postgresql-server-dev-18 zlib1g-dev \
 
 ## Building and Installing
 
-Install the [PGDG PostgreSQL version][pgdg]. For example
+To build and install the extension you need to have an installation of
+the PostgreSQL server with development libraries.
+
+### Building and installing the PostgreSQL server
+
+The package requires PostgreSQL version 17 or later, so you need to
+install the [PGDG PostgreSQL version][pgdg]. For example:
 
 ```bash
 sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
 wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo apt-key add -
 sudo apt-get update
-sudo apt-get -y install postgresql-18 postgresql-server-dev-18
+sudo apt-get install postgresql-18 postgresql-server-dev-18
 ```
 
-To build and install the extension:
+### Building and installing the extension
+
+Once you have installed a suitable PostgreSQL server, you can build
+and install the extension:
 
 ```
 make && sudo make install
@@ -71,98 +85,11 @@ standard case for packages from [PGDG][pgdg]). To build without SSL support:
 make USE_SSL=0 && sudo make USE_SSL=0 install
 ```
 
+[1]: https://github.com/timescale/pg_influx
+[2]: https://docs.influxdata.com/influxdb/v1/tools/api
+[3]: https://github.com/influxdata/telegraf
+[4]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol
 [pgdg]: https://wiki.postgresql.org/wiki/Apt
-
-## Options
-
-The following options are available:
-
-`influxdb.keep_quotes` (`boolean`)
-: Keep quotes for a string as part of the actual string. Quotes are
-  normally not part of the string, as outlined above, but if you want
-  to keep the quotes, then set this to `on`. Default is `off`. This
-  option can be set at any time and not only in the configuration
-  file.
-
-`influxdb.auto_create_table` (`boolean`)
-: Auto-create a default table if no table exists for the measurement
-  that arrived. This allows users to first collect measurements and
-  then later decide what measurements are interesting and how the
-  table definitions should look. Default is `off`. This option can be
-  set at any time and not only in the configuration file.
-
-`influxdb.http_workers` (`integer`)
-: The number of HTTP workers to spawn when starting the
-  server. Default is to spawn 4 workers.
-
-`influxdb.http_service` (`string`)
-: Service name or port number to use for the HTTP service. If you use
-  a string here, it will be looked up using `getservbyname` so you can
-  use something like `http` if you want. Default is to use the same
-  port as InfluxDB, which is 8086.
-
-`influxdb.database` (`string`)
-: Name of the database that the HTTP workers shall connect to.
-
-`influxdb.http_auth` (`boolean`)
-: Enable HTTP Basic Authentication using PostgreSQL roles. When
-  enabled, HTTP requests must provide credentials matching a
-  PostgreSQL role created with `CREATE USER ... WITH PASSWORD`.
-  Credentials can be provided via the `Authorization: Basic` header
-  or `u=` and `p=` query parameters. The `/ping` endpoint is exempt
-  from authentication. Default is `off`.
-
-`influxdb.https` (`boolean`)
-: Enable TLS on the HTTP listener (`influxdb.http_service`). When
-  `on`, the listener uses the certificate and key from PostgreSQL's
-  `ssl_cert_file` and `ssl_key_file` GUC parameters. If `ssl_ca_file`
-  is also set, mutual TLS (client certificate authentication) is
-  enabled. TLS 1.2 is the minimum accepted version. Default is `off`.
-
-  If enabled, the port being used is by default taken from
-  `influxdb.http_service`. This makes it easy to just enable HTTPS by setting
-  `influxdb.https`. If you want to serve both HTTP and HTTPS at the same time,
-  you need to use the `influxdb.https_service` option.
-
-`influxdb.https_service` (`string`)
-: Service name or port number for a **dedicated HTTPS listener** that
-  runs alongside the existing HTTP listener. When set to a non-empty
-  value, an additional set of workers (equal in count to
-  `influxdb.http_workers`) starts on this port with TLS always
-  enabled. Certificate configuration is the same as for
-  `influxdb.https` — the `ssl_cert_file`, `ssl_key_file`, and
-  `ssl_ca_file` GUC parameters are used. Default is empty (disabled).
-
-  This parameter allows HTTP and HTTPS clients to be served
-  simultaneously on separate ports. For example:
-
-  ```
-  influxdb.http_service  = '8086'   # plain HTTP
-  influxdb.https_service = '8086'   # TLS on a second port
-  ```
-
-> [!NOTE]
-> When `influxdb.http_auth` is enabled without `influxdb.https` or
-> `influxdb.https_service`, credentials are sent in cleartext. Enable
-> one of the TLS options, or use a TLS-terminating reverse proxy, to
-> protect credentials in transit.
-
-## Functions
-
-There are some functions available, which are mostly for debugging and
-testing:
-
-`FUNCTION influxdb.parse_text(text) RETURNS SETOF jsonb`
-: Parse an InfluxDB text block into multiple lines and return the
-  parsed result as JSONB. This is mostly intended to test the parser.
-
-`FUNCTION influxdb.tokenize(text) RETURNS TABLE(kind integer, value text)`
-: Process a text consisting of InfluxDB protocol lines and return the
-  tokens. Intended for testing the tokenizer.
-
-`PROCEDURE process_text(regnamespace, text)`
-: Procedure for processing a set of InfluxDB protocol lines and insert
-  them into the correct table.
 
 ## Copyrights
 
@@ -206,11 +133,3 @@ For all other files, the GNU Affero General Public License applies:
     You should have received a copy of the GNU Affero General Public
     License along with this program.  If not, see
     <https://www.gnu.org/licenses/>.
-
-[pg-influx]: https://github.com/timescale/pg_influx
-[line-protocol]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol
-[influx-api]: https://docs.influxdata.com/influxdb/v1/tools/api
-
-
-
-
