@@ -61,6 +61,28 @@ boolean, but with `pg_influxdb` values `T`, `TRUE`, `F`, and `FALSE`
 in all combinations of case are considered boolean. This means that
 also `tRue` is a boolean (if not quoted).
 
+### Escape sequences in string field values
+
+The InfluxDB line protocol defines exactly two escape sequences for
+double-quoted string field values:
+
+| Sequence | Meaning                    |
+|----------|----------------------------|
+| `\"`     | Literal double quote (`"`) |
+| `\\`     | Literal backslash (`\`)    |
+
+Other backslash sequences are **not** an escape sequence. The
+backslash and the following character are both stored as they are. For
+example, `"hello\nworld"` is stored as the twelve characters
+`hello\nworld`, not as a newline. This matches the behaviour of the
+reference implementation (`unescapeStringField` in
+[`models/points.go`][points-go]).
+
+Symbols (measurement names, tag keys, tag values, field keys) use a
+different convention: a backslash escapes a comma (`\,`), an equals
+sign (`\=`), or a space (`\ `). The backslash is stripped and the
+following character is kept.
+
 ### Line endings
 
 According to the [Influx Line Protocol Reference][line-protocol] a
@@ -69,7 +91,8 @@ line, this would generate a syntax error. This is very difficult to
 spot so instead blanks are allowed at the end of the line even when
 there is no timestamp.
 
-[line-protocol]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol
-[duplicate]: https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/#duplicate-points
-[quotes]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/#quotes
 [boolean]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/#boolean
+[duplicate]: https://docs.influxdata.com/influxdb/v2/reference/syntax/line-protocol/#duplicate-points
+[line-protocol]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol
+[points-go]: https://github.com/influxdata/influxdb/blob/1.11/models/points.go#L1314
+[quotes]: https://docs.influxdata.com/influxdb/cloud/reference/syntax/line-protocol/#quotes
